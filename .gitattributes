@@ -1,0 +1,27 @@
+# Line endings are decided here, not by whoever cloned the repo.
+#
+# core.autocrlf is true on this machine, which means git rewrites LF to
+# CRLF on checkout. For source that is harmless. For a file whose bytes
+# are pinned by a hash it is silent corruption: the file still works, but
+# every recorded SHA-256 of it stops matching, and nothing says why.
+#
+# Meril hit this and the fix was committed as "Stop git rewriting the
+# bytes of the manual". Setting it here means the next clone, on any
+# machine, cannot hit it at all.
+
+* text=auto eol=lf
+
+# Bytes pinned by a receipt - archify's deliver records a SHA-256 of this
+# HTML and the JSON alongside it stores that hash. Treat as opaque.
+docs/architecture-flow.html            -text
+docs/architecture-flow.visual-check.*  -text
+
+# Third-party payloads, vendored deliberately so the dashboard makes zero
+# external requests. Not ours to reformat, and candidates for hash pinning.
+packages/core/src/jetpace_core/web/static/vendor/*  -text
+
+# Binary, so git should never guess.
+*.png   binary
+*.pdf   binary
+*.exe   binary
+*.dll   binary

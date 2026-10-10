@@ -1,0 +1,21 @@
+[project]
+name = "jetpace"
+version = "0.1.0"
+description = "Jetpace platform - energy and environmental monitoring"
+requires-python = ">=3.12,<3.13"
+dependencies = ["jetpace-core"]
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+jetpace-core = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["packages/core/tests"]
+pythonpath = ["packages/core/src"]

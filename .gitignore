@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+*.egg-info/
+
+# build output
+build/
+dist/
+*.spec
+
+# vendored third-party payloads - fetched by script, never committed
+installer/vendor/
+
+# local secrets and config
+.env
+*.key
+
+# dev-only: database, logs, generated passwords
+.local/
+
+# Manufacturer datasheets: 110 MB of PDFs, reference material not source.
+# Git cannot delta-compress them, so every clone would pay for all of it
+# forever - and several are customer-specific. Register maps are pinned to
+# these by tests, so keep the folder, just not in history.
+Modbus Mapping/

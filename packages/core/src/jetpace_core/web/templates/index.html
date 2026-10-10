@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jetpace &mdash; Prototype</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/vendor/htmx.min.js" defer></script>
+<script src="/static/vendor/echarts.min.js" defer></script>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1>Jetpace</h1>
+    <span class="site">Prototype site</span>
+    <span class="clock" id="clock"></span>
+  </header>
+
+  {# everything that changes on its own lives in the polled partial #}
+  <div id="live" hx-get="/partials/live" hx-trigger="every 5s" hx-swap="innerHTML">
+    {% include "_live.html" %}
+  </div>
+
+  <!-- ================= pressure trend ================= -->
+  <section>
+    <h2>Differential pressure
+      <span class="hint">hourly average, last 24 h, shared scale, from the rollup</span>
+    </h2>
+    <div class="card">
+      <div class="smalls" id="dp-chart"></div>
+      <div class="table-view tablewrap" id="dp-table" hidden></div>
+      <div class="chart-foot">
+        <span>Dashed line marks 0 Pa &mdash; the cascade is reversed below it.</span>
+        <button class="toggle" type="button" data-target="dp">Table view</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= excursions ================= -->
+  <section>
+    <h2>Excursions
+      <span class="hint">minutes at or below 0 Pa, last 7 days</span>
+    </h2>
+    <div class="card">
+      {% if excursions %}
+        {% set worst = excursions | map(attribute='minutes_below_zero') | max %}
+        {% for e in excursions %}
+          <div class="barrow">
+            <span class="label">{{ e.name }} <span class="dim">{{ e.code }}</span></span>
+            <span class="bartrack">
+              {% if e.minutes_below_zero %}
+                {# no bar at all for a clean room: a 1px sliver would read
+                   as a small excursion, which is worse than nothing #}
+                <span class="barfill critical"
+                      style="width: {{ 0 if not worst else (100 * e.minutes_below_zero / worst) | round(1) }}%"></span>
+              {% endif %}
+            </span>
+            <span class="value">
+              {% if e.minutes_below_zero %}{{ '{:,}'.format(e.minutes_below_zero) }} min
+              {% else %}<span class="pill good">clean</span>{% endif %}
+            </span>
+          </div>
+        {% endfor %}
+        <div class="chart-foot">
+          Worst reading in the period:
+          {% for e in excursions %}{{ e.code }} {{ e.worst }} Pa{{ ", " if not loop.last }}{% endfor %}
+        </div>
+      {% else %}
+        <div class="chart-foot">No pressure data in the period.</div>
+      {% endif %}
+    </div>
+  </section>
+
+  <!-- ================= energy ================= -->
+  <section>
+    <h2>Energy
+      <span class="hint">daily consumption, last 7 days</span>
+    </h2>
+    <div class="card">
+      <div id="em-chart" class="chart"></div>
+      <div class="table-view tablewrap" id="em-table" hidden></div>
+      <div class="chart-foot">
+        <div class="legend" id="em-legend"></div>
+        <button class="toggle" type="button" data-target="em">Table view</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= consumption, with its statuses ================= -->
+  <section>
+    <h2>consumption()
+      <span class="hint">the billing function, over the last 7 days</span>
+    </h2>
+    <div class="card tablewrap">
+      <table>
+        <thead>
+          <tr><th>Device</th><th>Name</th><th class="num">Used</th>
+              <th>Status</th><th>Period</th></tr>
+        </thead>
+        <tbody>
+          {% for e in energy %}
+            <tr>
+              <td class="code">{{ e.code }}</td>
+              <td>{{ e.name }}</td>
+              <td class="num">
+                {% if e.used is not none %}{{ '{:,.1f}'.format(e.used) }} kWh
+                {% else %}&mdash;{% endif %}
+              </td>
+              <td>
+                {% if e.status == 'ok' %}<span class="pill good">ok</span>
+                {% elif e.status == 'partial_new_meter' %}<span class="pill good">partial &mdash; new meter</span>
+                {% elif e.status == 'counter_reset' %}<span class="pill serious">counter reset</span>
+                {% elif e.status == 'stale_open' %}<span class="pill warning">stale opening read</span>
+                {% elif e.status == 'not_a_counter' %}<span class="pill offline">not a counter</span>
+                {% else %}<span class="pill critical">{{ e.status }}</span>{% endif %}
+              </td>
+              <td class="dim">{{ e.period_start }} &rarr; {{ e.period_end }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="dim">No counter data yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="chart-foot">
+        A blank figure is never a zero. The status says why the system would
+        not report a number it could not defend.
+      </div>
+    </div>
+  </section>
+
+  <footer class="foot">
+    Prototype &mdash; simulated devices. htmx and ECharts are served locally,
+    so this page makes no external requests.
+  </footer>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var ink    = cssVar("--ink-2");
+  var muted  = cssVar("--muted");
+  var grid   = cssVar("--grid");
+  var axis   = cssVar("--axis");
+  var SERIES = [cssVar("--series-1"), cssVar("--series-2"), cssVar("--series-3")];
+
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement)
+             .getPropertyValue(name).trim();
+  }
+
+  function clock() {
+    var el = document.getElementById("clock");
+    if (el) el.textContent = new Date().toLocaleTimeString();
+  }
+  clock(); setInterval(clock, 1000);
+
+  // Shared axis and grid styling. Recessive: hairline grid, muted ticks,
+  // and no axis line on the value side - the gridlines already imply it.
+  function baseOption() {
+    return {
+      animation: false,
+      textStyle: { fontFamily: getComputedStyle(document.body).fontFamily },
+      grid: { left: 52, right: 74, top: 18, bottom: 30 },
+      tooltip: {
+        trigger: "axis",
+        axisPointer: { type: "cross", label: { show: false },
+                       crossStyle: { color: axis }, lineStyle: { color: axis } },
+        backgroundColor: cssVar("--surface"),
+        borderColor: cssVar("--hairline"),
+        textStyle: { color: cssVar("--ink"), fontSize: 12 }
+      },
+      xAxis: {
+        axisLine: { lineStyle: { color: axis } },
+        axisTick: { show: false },
+        axisLabel: { color: muted, fontSize: 11 },
+        splitLine: { show: false }
+      },
+      yAxis: {
+        axisLine: { show: false },
+        axisTick: { show: false },
+        axisLabel: { color: muted, fontSize: 11 },
+        splitLine: { lineStyle: { color: grid, width: 1 } }
+      }
+    };
+  }
+
+  function legendInto(id, series) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML = series.map(function (s, i) {
+      return '<span><i style="background:' + SERIES[i % SERIES.length] +
+             '"></i>' + escapeHtml(s.name) + ' <span class="dim">' +
+             escapeHtml(s.code) + '</span></span>';
+    }).join("");
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;",
+               '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function tableInto(id, head, rows) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.innerHTML =
+      "<table><thead><tr>" +
+      head.map(function (h, i) {
+        return "<th" + (i ? ' class="num"' : "") + ">" + escapeHtml(h) + "</th>";
+      }).join("") +
+      "</tr></thead><tbody>" +
+      rows.map(function (r) {
+        return "<tr>" + r.map(function (c, i) {
+          return "<td" + (i ? ' class="num"' : "") + ">" + escapeHtml(c) + "</td>";
+        }).join("") + "</tr>";
+      }).join("") +
+      "</tbody></table>";
+  }
+
+  // ---- differential pressure: small multiples --------------------------
+  //
+  // One chart per room, each a SINGLE series, all on a shared y-scale so
+  // the rooms are comparable at a glance. Single series means no
+  // categorical palette and no legend - the title names it - which is
+  // what keeps six rooms legal where one six-line chart would not be.
+  fetch("/api/dp-trend?hours=24").then(function (r) { return r.json(); })
+    .then(function (data) {
+      var host = document.getElementById("dp-chart");
+      if (!host) { return; }
+      if (!data.series.length) {
+        host.innerHTML = '<div class="small"><div class="thin">' +
+                         'No pressure history yet.</div></div>';
+        return;
+      }
+
+      // one scale for every room, padded, and always including zero so the
+      // reference line is on screen even for a room that never dips
+      var lo = 0, hi = 0;
+      data.series.forEach(function (s) {
+        s.min.forEach(function (p) { lo = Math.min(lo, p[1]); });
+        s.max.forEach(function (p) { hi = Math.max(hi, p[1]); });
+      });
+      var pad = Math.max(1, (hi - lo) * 0.12);
+      lo = Math.floor(lo - pad); hi = Math.ceil(hi + pad);
+
+      var charts = [];
+      host.innerHTML = data.series.map(function (s) {
+        var last = s.avg.length ? s.avg[s.avg.length - 1][1] : null;
+        var body = s.avg.length >= 2
+          ? '<div class="mini" data-code="' + escapeHtml(s.code) + '"></div>'
+          : '<div class="thin">not enough history yet</div>';
+        return '<div class="small">' +
+                 '<div class="head"><b>' + escapeHtml(s.name) + '</b>' +
+                 '<span class="code">' + escapeHtml(s.code) + '</span>' +
+                 '<span class="now">' +
+                   (last === null ? "\u2014" : last + " Pa") +
+                 '</span></div>' + body +
+               '</div>';
+      }).join("");
+
+      data.series.forEach(function (s) {
+        var cell = host.querySelector('.mini[data-code="' + s.code + '"]');
+        if (!cell) { return; }
+        var chart = echarts.init(cell);
+        chart.setOption({
+          animation: false,
+          grid: { left: 34, right: 8, top: 8, bottom: 18 },
+          tooltip: {
+            trigger: "axis",
+            axisPointer: { type: "line", lineStyle: { color: axis } },
+            backgroundColor: cssVar("--surface"),
+            borderColor: cssVar("--hairline"),
+            textStyle: { color: cssVar("--ink"), fontSize: 12 },
+            formatter: function (ps) {
+              var i = ps[0].dataIndex;
+              return new Date(s.avg[i][0]).toLocaleString() +
+                     "<br><b>" + s.avg[i][1] + " Pa</b> average" +
+                     '<br><span style="color:' + muted + '">' +
+                     s.min[i][1] + " to " + s.max[i][1] + " Pa in the hour</span>";
+            }
+          },
+          xAxis: {
+            type: "time",
+            axisLine: { lineStyle: { color: axis } },
+            axisTick: { show: false },
+            axisLabel: { color: muted, fontSize: 10 },
+            splitLine: { show: false }
+          },
+          yAxis: {
+            type: "value", min: lo, max: hi,
+            axisLine: { show: false }, axisTick: { show: false },
+            axisLabel: { color: muted, fontSize: 10 },
+            splitLine: { lineStyle: { color: grid } }
+          },
+          series: [{
+            type: "line",
+            data: s.avg,
+            showSymbol: false,
+            lineStyle: { width: 2, color: SERIES[0] },
+            itemStyle: { color: SERIES[0] },
+            markLine: {
+              silent: true, symbol: "none",
+              data: [{ yAxis: 0 }],
+              lineStyle: { color: cssVar("--critical"), width: 1, type: "dashed" }
+            }
+          }]
+        });
+        charts.push(chart);
+        new ResizeObserver(function () { chart.resize(); }).observe(cell);
+      });
+
+      // the table view: every room, every hour, in one grid
+      var times = [];
+      data.series.forEach(function (s) {
+        s.avg.forEach(function (p) {
+          if (times.indexOf(p[0]) === -1) { times.push(p[0]); }
+        });
+      });
+      times.sort(function (a, b) { return a - b; });
+      var index = {};
+      data.series.forEach(function (s) {
+        index[s.code] = {};
+        s.avg.forEach(function (p) { index[s.code][p[0]] = p[1]; });
+      });
+      tableInto("dp-table",
+        ["Hour"].concat(data.series.map(function (s) { return s.name; })),
+        times.map(function (t) {
+          return [new Date(t).toLocaleString()].concat(
+            data.series.map(function (s) {
+              var v = index[s.code][t];
+              return v === undefined ? "\u2014" : v + " Pa";
+            }));
+        }));
+    });
+
+  // ---- energy ----------------------------------------------------------
+  fetch("/api/energy-daily?days=7").then(function (r) { return r.json(); })
+    .then(function (data) {
+      var el = document.getElementById("em-chart");
+      if (!el || !data.series.length) { return; }
+      var chart = echarts.init(el);
+      var opt = baseOption();
+      opt.xAxis.type = "category";
+      opt.xAxis.data = data.series[0].points.map(function (p) { return p[0]; });
+      opt.yAxis.name = "kWh";
+      opt.yAxis.nameTextStyle = { color: muted, fontSize: 11, align: "right" };
+      opt.tooltip.axisPointer = { type: "shadow" };
+      opt.series = data.series.map(function (s, i) {
+        return {
+          name: s.name,
+          type: "bar",
+          data: s.points.map(function (p) { return p[1]; }),
+          itemStyle: {
+            color: SERIES[i % SERIES.length],
+            // 4px rounded data-end, anchored to the baseline
+            borderRadius: [4, 4, 0, 0],
+            // 2px surface gap so adjacent bars never touch
+            borderColor: cssVar("--surface"),
+            borderWidth: 2
+          },
+          barGap: "10%"
+        };
+      });
+      chart.setOption(opt);
+      new ResizeObserver(function () { chart.resize(); }).observe(el);
+      legendInto("em-legend", data.series);
+
+      var head = ["Day"].concat(data.series.map(function (s) { return s.name; }));
+      tableInto("em-table", head,
+        opt.xAxis.data.map(function (day, idx) {
+          return [day].concat(data.series.map(function (s) {
+            return s.points[idx] ? s.points[idx][1].toFixed(1) + " kWh" : "—";
+          }));
+        }));
+    });
+
+  // ---- table view toggles ----------------------------------------------
+  document.addEventListener("click", function (ev) {
+    var btn = ev.target.closest("button.toggle");
+    if (!btn) return;
+    var key = btn.dataset.target;
+    var chart = document.getElementById(key + "-chart");
+    var table = document.getElementById(key + "-table");
+    var showTable = table.hidden;
+    table.hidden = !showTable;
+    chart.style.display = showTable ? "none" : "";
+    btn.textContent = showTable ? "Chart view" : "Table view";
+  });
+})();
+</script>
+</body>
+</html>

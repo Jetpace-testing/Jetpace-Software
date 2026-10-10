@@ -1,0 +1,83 @@
+{# Polled by HTMX every few seconds. Contains the summary tiles and the
+   live table, which are the only parts that change on their own. #}
+
+<dl class="tiles">
+  <div class="tile">
+    <dt>Devices online</dt>
+    <dd>{{ summary.online or 0 }} <small>of {{ summary.devices or 0 }}</small></dd>
+  </div>
+  <div class="tile {{ 'clean' if (summary.rooms_in_spec or 0) == (summary.rooms_total or 0) else 'alarm' }}">
+    <dt>Rooms in spec</dt>
+    <dd>{{ summary.rooms_in_spec or 0 }} <small>of {{ summary.rooms_total or 0 }}</small></dd>
+  </div>
+  <div class="tile {{ 'alarm' if (summary.excursions_24h or 0) else 'clean' }}">
+    <dt>Excursion minutes, 24 h</dt>
+    <dd>{{ '{:,}'.format(summary.excursions_24h or 0) }}</dd>
+  </div>
+  <div class="tile">
+    <dt>Readings, 24 h</dt>
+    <dd>{{ '{:,}'.format(summary.readings_24h or 0) }}</dd>
+  </div>
+</dl>
+
+<section>
+  <h2>Live
+    <span class="hint">refreshes by itself</span>
+  </h2>
+  <div class="card tablewrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Device</th>
+          <th>Name</th>
+          <th>Gateway</th>
+          <th class="num">Unit</th>
+          <th class="num">Reading</th>
+          <th>State</th>
+          <th class="num">Age</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in devices %}
+          {% set dp = d.points | selectattr('param', 'equalto', 'dp') | first %}
+          {% set kwh = d.points | selectattr('param', 'equalto', 'kwh_import') | first %}
+          <tr>
+            <td class="code">{{ d.code }}</td>
+            <td>{{ d.name }}</td>
+            <td class="dim">{{ d.gateway }}</td>
+            <td class="num dim">{{ d.unit_id }}</td>
+            <td class="num">
+              {% if dp %}
+                {{ '%.0f'|format(dp.value) }} Pa
+              {% elif kwh %}
+                {{ '{:,.1f}'.format(kwh.value) }} kWh
+              {% else %}
+                &mdash;
+              {% endif %}
+            </td>
+            <td>
+              {% if not d.online %}
+                <span class="pill offline">offline</span>
+              {% elif dp %}
+                {% set cls, label = classify_dp(dp.value) %}
+                <span class="pill {{ cls }}">{{ label }}</span>
+              {% else %}
+                <span class="pill good">logging</span>
+              {% endif %}
+            </td>
+            <td class="num dim">
+              {% if d.age_s is none %}&mdash;
+              {% elif d.age_s < 90 %}{{ d.age_s }} s
+              {% elif d.age_s < 3600 %}{{ (d.age_s // 60) }} min
+              {% else %}{{ (d.age_s // 3600) }} h{% endif %}
+            </td>
+          </tr>
+        {% else %}
+          <tr><td colspan="7" class="dim">
+            No readings yet. Start the simulator and the poller.
+          </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>

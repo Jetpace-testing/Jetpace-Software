@@ -333,7 +333,19 @@ class Supervisor:
                     return False, f"HTTP {r.status}"
                 body = json.loads(r.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
-            return False, f"HTTP {exc.code}"
+            # Read the body. An unwell dashboard answers 503 with a `why`
+            # saying which check failed and by how much, and urllib hands
+            # the body back on the exception - so throwing it away here
+            # turned a diagnosable rollback into "HTTP 503" in the log,
+            # at a customer site, after the fact.
+            detail = ""
+            try:
+                said = json.loads(exc.read().decode("utf-8")).get("why")
+                if isinstance(said, str) and said:
+                    detail = f": {said}"
+            except (ValueError, OSError, AttributeError):
+                pass
+            return False, f"HTTP {exc.code}{detail}"
         except (urllib.error.URLError, OSError) as exc:
             return False, f"not answering ({exc.reason if hasattr(exc, 'reason') else exc})"
         except ValueError:

@@ -261,10 +261,10 @@ def write_config(port: int, with_sim: bool, sim_units: int,
     # with --replace and nothing else, and its defaults quietly moved the
     # dashboard to another port and dropped the simulator. Both are
     # one-word flags and both failures were silent - the service came
-    # back up, /healthz answered ok:true because it counts readings over
+    # back up, /healthz answered ok:true because it counted readings over
     # 24 hours rather than checking freshness, and the data had stopped.
     # A config written without being read back is a config nobody
-    # checked.
+    # checked. (/healthz checks freshness now; see architecture.md §5.)
     say(f"wrote {CONFIG_FILE.name}  ({len(children)} children)")
     print()
     for child in children:

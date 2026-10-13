@@ -15,6 +15,8 @@ out of the poller keeps it out of the web layer.
 
 from __future__ import annotations
 
+import os
+import time
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -54,6 +56,49 @@ RANGES: tuple[tuple[str, float], ...] = (
 MIN_HOURS = 0.1
 MAX_HOURS = 24 * 400
 
+# How old the newest reading may be before /healthz calls the system
+# unwell.
+#
+# Above OFFLINE_AFTER, which is 90 seconds and is already this project's
+# generous answer to "has this device gone quiet" - generous because a
+# device in offline backoff is skipped for several scan passes and a
+# tighter number would flap. This figure answers a bigger question: not
+# one device going quiet but EVERY device going quiet, because `newest`
+# is the newest reading from anything at all.
+#
+# It has to stay above the slowest scan interval in the configuration, or
+# a site that polls a meter every three minutes would be reported unwell
+# between readings. A site with a slow scan class raises it with
+# JETPACE_HEALTH_AGE_LIMIT.
+READING_AGE_LIMIT = 120.0
+
+ENV_AGE_LIMIT = "JETPACE_HEALTH_AGE_LIMIT"
+
+
+def reading_age_limit() -> float:
+    """
+    The limit, read at call time rather than captured at import.
+
+    The same lesson as HEALTH_DEADLINE in the supervisor: a value frozen
+    into a default argument cannot be changed by a test without changing
+    how long the test takes, and a health threshold is exactly the thing
+    a test needs to move.
+    """
+    raw = os.environ.get(ENV_AGE_LIMIT)
+    if raw:
+        try:
+            value = float(raw)
+        except ValueError:
+            value = 0.0
+        if value > 0:
+            return value
+        # A limit of zero or a typo would mark a healthy system unwell
+        # for ever, which during an update means a rollback. Ignore it
+        # and say so rather than obeying it.
+        print(f"  ignoring {ENV_AGE_LIMIT}={raw!r}: not a positive number",
+              flush=True)
+    return READING_AGE_LIMIT
+
 
 def window_label(hours: float) -> str:
     """How the chart footer says the window, in words rather than hours."""
@@ -80,6 +125,13 @@ def create_app(dsn: str,
     what makes those tests independent of either product.
     """
     app = FastAPI(title="Jetpace", docs_url="/api/docs")
+
+    # When this process started, as a monotonic reading. /healthz asks
+    # whether a reading has arrived since, which is how a release proves
+    # it is logging rather than inheriting its predecessor's data.
+    # Monotonic because it is only ever compared against another elapsed
+    # time, and because a wall clock can step backwards.
+    started = time.monotonic()
 
     # Product static BEFORE core's. Starlette matches mounts in the order
     # they are registered and "/static" is a prefix of
@@ -233,21 +285,84 @@ def create_app(dsn: str,
     @app.get("/healthz")
     def healthz():
         """
-        What the supervisor's health gate will call. It asserts the
-        database answers AND that data is arriving - a release that starts
-        cleanly but silently stops logging must not pass.
+        The supervisor's release gate: does the database answer, and is
+        this version of the software actually logging?
+
+        It used to ask whether any reading existed in the last 24 hours,
+        and that was wrong twice over.
+
+        ONE: it stayed true for a full day after logging stopped. On 13
+        October a mis-registered service dropped the device simulator,
+        readings stopped at 16:55, and this endpoint reported ok:true with
+        67,000 readings still inside the window. Half an hour of no data,
+        and the thing whose job is to notice said everything was well.
+
+        TWO, and worse for the gate: freshness ALONE would not have fixed
+        it. The gate runs just after a release is swapped in, and the
+        readings written by the PREVIOUS version are still seconds old at
+        that moment. A broken release that never logs anything would pass
+        on its first poll, two seconds in, on the strength of data its
+        predecessor wrote.
+
+        So there are two questions, and both have to hold:
+
+          - has a reading arrived SINCE THIS PROCESS STARTED? That is what
+            the previous version's data cannot answer for, and what a
+            release has to earn.
+          - is the newest reading younger than the age limit? That is what
+            catches logging stopping three hours later.
+
+        The first is compared as DURATIONS - the database's measured age
+        against our own uptime - never as two timestamps. Both sides are
+        elapsed times, so a clock or timezone disagreement between the
+        application and the database cancels out instead of deciding the
+        answer.
+
+        A system that has NEVER logged anything is well. It cannot have
+        regressed from nothing, and two callers depend on this: the
+        installer waits for ok:true on a database that is empty by
+        definition, and a site that is installed but not yet commissioned
+        must still be able to take an update.
         """
         try:
             with queries.connect(dsn) as conn:
-                s = queries.summary(conn)
-            fresh = bool(s.get("readings_24h"))
-            return JSONResponse(
-                {"ok": fresh, "readings_24h": s.get("readings_24h"),
-                 "newest": s.get("newest").isoformat() if s.get("newest") else None},
-                status_code=200 if fresh else 503)
+                h = queries.health(conn)
         except Exception as exc:                       # noqa: BLE001
-            return JSONResponse({"ok": False, "error": str(exc)},
+            return JSONResponse({"ok": False, "why": str(exc)},
                                 status_code=503)
+
+        uptime = time.monotonic() - started
+        age = None if h.get("age_s") is None else float(h["age_s"])
+        limit = reading_age_limit()
+
+        if age is None:
+            ok = True
+            why = "nothing has ever been logged, so there is nothing to lose"
+        elif age >= uptime:
+            # The pre-swap case. Also true for a few seconds whenever the
+            # web process restarts on its own, which resolves itself as
+            # soon as the next reading lands.
+            ok = False
+            why = (f"no reading has arrived in the {uptime:.0f}s since this "
+                   f"process started; the newest is {age:.0f}s old and was "
+                   f"written before it")
+        elif age > limit:
+            ok = False
+            why = (f"the newest reading is {age:.0f}s old, past the "
+                   f"{limit:.0f}s limit; the system has stopped logging")
+        else:
+            ok = True
+            why = "ok"
+
+        return JSONResponse(
+            {"ok": ok, "why": why,
+             "newest": (h["newest"].isoformat()
+                        if h.get("newest") else None),
+             "age_s": None if age is None else round(age, 1),
+             "uptime_s": round(uptime, 1),
+             "age_limit_s": limit,
+             "devices": h.get("devices")},
+            status_code=200 if ok else 503)
 
     # Products last, so a product cannot shadow a shell route by
     # registering the same path first. /healthz in particular is the

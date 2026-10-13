@@ -29,6 +29,31 @@ OFFLINE_AFTER = "interval '90 seconds'"
 # shared summary is defined by SUMMARY below and nothing else.
 
 
+# What /healthz asks, and deliberately not SUMMARY.
+#
+# The supervisor polls the health endpoint every two seconds while a
+# release is on trial, so this has to stay cheap. SUMMARY counts every
+# reading in the last 24 hours - on a site logging 400 meters that is
+# tens of millions of rows to answer a question health does not ask.
+#
+# max(ts) on a hypertable is the one thing health genuinely needs, and
+# TimescaleDB answers it from chunk metadata rather than by scanning.
+#
+# The age is computed by the DATABASE, not by subtracting in Python. The
+# application and the database can disagree about the time - different
+# clocks, and in a frozen install a different idea of the timezone - and
+# a health check that reports a negative age because of clock skew is
+# worse than no health check.
+HEALTH = """
+WITH newest AS (SELECT max(ts) AS ts FROM reading)
+SELECT n.ts                                       AS newest,
+       EXTRACT(EPOCH FROM (now() - n.ts))::float  AS age_s,
+       (SELECT count(*) FROM device
+         WHERE retired_at IS NULL)                AS devices
+FROM   newest n
+"""
+
+
 def connect(dsn: str) -> psycopg.Connection:
     return psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10)
 
@@ -256,6 +281,12 @@ def bucket_width(hours: float) -> str:
 def summary(conn: psycopg.Connection) -> dict:
     with conn.cursor() as cur:
         cur.execute(SUMMARY)
+        return cur.fetchone() or {}
+
+
+def health(conn: psycopg.Connection) -> dict:
+    with conn.cursor() as cur:
+        cur.execute(HEALTH)
         return cur.fetchone() or {}
 
 

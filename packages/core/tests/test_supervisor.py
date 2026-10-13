@@ -112,6 +112,56 @@ class FakeHealth:
         return True, "ok"
 
 
+def _refusing_with(body: bytes, code: int = 503):
+    """
+    A urlopen that fails the way an unwell dashboard does.
+
+    urllib raises HTTPError for a 503 and attaches the response body to
+    the exception, which is the only reason the reason is recoverable.
+    """
+    import io
+    import urllib.error
+
+    def urlopen(url, timeout=None):
+        raise urllib.error.HTTPError(url, code, "Service Unavailable", {},
+                                     io.BytesIO(body))
+    return urlopen
+
+
+def test_a_failed_gate_reports_why_and_not_just_the_status(monkeypatch,
+                                                           tmp_path):
+    """
+    /healthz answers 503 with a `why` naming the check that failed and by
+    how much. This used to be discarded, so a release that rolled back at
+    a customer site left "HTTP 503" in the log and nothing else - which
+    is not enough to tell a broken release from a dead gateway.
+    """
+    s = Supervisor(tmp_path, [], "http://127.0.0.1:1/healthz")
+    monkeypatch.setattr(
+        sup.urllib.request, "urlopen",
+        _refusing_with(b'{"ok": false, "why": "the newest reading is 400s '
+                       b'old, past the 120s limit"}'))
+    ok, why = s.healthy()
+    assert not ok
+    assert "503" in why
+    assert "400s old" in why, "the reason has to survive into the log"
+
+
+def test_a_failed_gate_still_reports_something_when_the_body_is_useless(
+        monkeypatch, tmp_path):
+    """
+    A 503 from something that is not our dashboard at all - a proxy, a
+    half-started server - must not crash the gate on its way to failing.
+    """
+    s = Supervisor(tmp_path, [], "http://127.0.0.1:1/healthz")
+    for body in (b"", b"<html>Gateway Timeout</html>", b"{}", b"null"):
+        monkeypatch.setattr(sup.urllib.request, "urlopen",
+                            _refusing_with(body))
+        ok, why = s.healthy()
+        assert not ok
+        assert "503" in why
+
+
 def test_health_is_not_just_an_open_port(monkeypatch, tmp_path):
     """
     An HTTP 200 whose body says ok=false is not healthy. This is the same

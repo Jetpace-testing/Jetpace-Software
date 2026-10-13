@@ -395,6 +395,44 @@ erroring — Titan takes the wildcard address, Mosquitto takes loopback, and
 Windows permits the overlap — but loopback is the more specific match, so
 Mosquitto silently wins every local connection intended for Titan.
 
+### The health gate
+
+`/healthz` is the supervisor's release gate and the installer's
+finished-yet check. It is consulted **only while a swapped-in release is on
+trial** — `_supervise()` never calls it — so a strict answer cannot put the
+service into a restart loop during ordinary running. A failed gate makes the
+supervisor exit; `sc failure` restarts it, the next start counts an attempt, and
+three attempts roll the release back.
+
+It answers two questions, and both must hold:
+
+1. **Has a reading arrived since this process started?** Compared as durations —
+   the database's measured age against our own uptime — never as two timestamps,
+   so a clock or timezone disagreement cancels out instead of deciding the
+   answer.
+2. **Is the newest reading younger than `READING_AGE_LIMIT`** (120 s, raise with
+   `JETPACE_HEALTH_AGE_LIMIT` for a slow scan class)? Above `OFFLINE_AFTER`'s
+   90 s, because this asks whether *everything* has gone quiet rather than one
+   device.
+
+A system that has **never** logged anything is well. Nothing can regress from
+nothing, and two callers depend on it: the installer waits for `ok:true` against
+a database that is empty by definition, and a site that is installed but not yet
+commissioned must still be able to take an update.
+
+Both questions exist because of real faults. The endpoint originally asked
+whether any reading existed in the last 24 hours, which stayed true for a day
+after logging stopped — on 13 October it reported `ok:true` through half an hour
+of silence. And freshness *alone* would not have fixed the gate: it runs seconds
+after a swap, when the readings the **previous** version wrote are still fresh, so
+a release that never logs anything would have passed on its first poll on the
+strength of data it did not write. Question 1 is what a release has to earn;
+question 2 is what catches logging stopping three hours later.
+
+The reason travels. An unwell dashboard returns `why` in its body, and the
+supervisor reads it off the 503 and logs it, because "HTTP 503" at a customer
+site does not distinguish a broken release from a dead gateway.
+
 ### Rules every process must obey
 
 - **Tolerate a dependency being absent at startup, and returning later.** Learned
@@ -545,7 +583,7 @@ Honest register of where the repo and the specification disagree.
 | 12 | **Environment does not pin a validated core version**, so an energy change does reach a cleanroom install | §2 has the three routes to fixing it and what each costs. Not needed until there is a qualified customer install; much cheaper now the packages exist. The claim has been removed from §2 rather than left standing unqualified |
 | 13 | **`consumption()` is an energy function in core's schema, permanently.** `migrations/0002` defines it and `0003`/`0004` rewrite it | Migrations are numbered, forward-only and already applied at every install, so they cannot move or be renumbered. Core's *Python* never calls it, which is what the boundary test checks. Per-product migration chains are the real fix and are only mandatory once products ship separately — see debt #12 |
 | 14 | **One frozen bundle carries both products**; which one a site serves is `config/products.toml` | Deliberate: it keeps `REPLACEABLE`, the NSIS file lists and the one-version-per-release-zip assumption untouched, which matters because the updater must work before anything ships. The cost is that an environment-only customer has the energy code on disk, unreachable but present — which a validated install may eventually object to |
-| 15 | **`/healthz` asserts a 24-hour reading count, not freshness**, so it answers `ok:true` for a full day after data stops | Found the hard way on 13 October: a mis-registered service dropped the simulator, readings stopped at 16:55, and the health gate stayed green with 67k readings still inside the window. This is the supervisor's **release gate** — a release that starts cleanly and silently stops logging passes it. It should compare `newest` against the slowest configured scan interval. Note the fix lands in `web/`, not in `supervisor.py`, so it can ship over OTA |
+| 15 | ~~`/healthz` asserts a 24-hour reading count, not freshness~~ — **fixed.** It now requires a reading to have arrived since the process started **and** to be younger than `READING_AGE_LIMIT` | Found the hard way on 13 October: readings stopped at 16:55 and the gate stayed green with 67k still inside the window. Fixing it surfaced a second bug the first had been hiding — freshness alone would still have passed, because the *previous* version's readings are seconds old when the gate runs. See §5 |
 | 16 | **Several dashboards, one health gate.** The supervisor watches one `health_url`; a single product instance failing is caught only by child restart | Each instance answers for itself on its own port, but `Supervisor.from_config` takes one URL. Widening it means editing `supervisor.py`, which debt #5 says can only reach a site through the installer — so this waits for a reason better than tidiness |
 
 ---

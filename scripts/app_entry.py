@@ -20,10 +20,15 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-# Only needed when run from a checkout; in a frozen bundle the package is
-# already on the path and this directory does not exist.
-_src = Path(__file__).resolve().parent.parent / "packages" / "core" / "src"
-if _src.is_dir():
+# Only needed when run from a checkout with a Python that is not the
+# workspace venv; in a frozen bundle these directories do not exist and
+# build.py has already put every package on the path with --paths.
+#
+# EVERY package, not just core: this entry point reaches the dashboard,
+# which imports a product by name from configuration. Core on its own
+# would start and then fail to find the product it was told to serve.
+for _src in sorted(
+        (Path(__file__).resolve().parent.parent / "packages").glob("*/src")):
     sys.path.insert(0, str(_src))
 
 from jetpace_core.cli import main                                # noqa: E402

@@ -43,7 +43,13 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-SRC = ROOT / "packages" / "core" / "src"
+
+# Every workspace member's source root, not just core's. Globbed rather
+# than listed so that a third product is a new directory and no edit
+# here - and so this script, which both products share, names neither.
+SRCS = sorted((ROOT / "packages").glob("*/src"))
+SRC = ROOT / "packages" / "core" / "src"      # core specifically, where needed
+
 DIST = ROOT / "dist"
 WORK = ROOT / "build" / "pyinstaller"
 
@@ -57,13 +63,31 @@ PROVISION_ENTRY = ROOT / "scripts" / "provision_entry.py"
 
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 
-# The web tier serves Jinja templates and vendored JavaScript from inside
-# the package. They are data, not code, so PyInstaller does not find them
-# by following imports - they have to be named.
-APP_DATA = [
-    (SRC / "jetpace_core" / "web" / "templates", "jetpace_core/web/templates"),
-    (SRC / "jetpace_core" / "web" / "static", "jetpace_core/web/static"),
-]
+def web_assets() -> list[tuple[Path, str]]:
+    """
+    Every package's templates and static files.
+
+    These are data, not code, so PyInstaller does not find them by
+    following imports - each directory has to be named. Discovered by
+    walking the workspace rather than listed, because the product
+    packages each bring their own and a forgotten entry is a page that
+    renders as a stack trace on a customer machine.
+
+    The destination is the package's own import path, so
+    `Path(__file__).parent / "templates"` resolves inside the bundle
+    exactly as it does in a checkout - which is what lets a Product
+    describe its own directories without knowing whether it is frozen.
+    """
+    found: list[tuple[Path, str]] = []
+    for src in SRCS:
+        for package in sorted(p for p in src.iterdir() if p.is_dir()):
+            for kind in ("templates", "static"):
+                directory = package / "web" / kind
+                if directory.is_dir():
+                    found.append(
+                        (directory, f"{package.name}/web/{kind}"))
+    return found
+
 
 # Imports PyInstaller cannot see: chosen at runtime by name, or pulled in
 # by a framework rather than by an import statement.
@@ -74,6 +98,28 @@ APP_HIDDEN = [
     "paho.mqtt.client",
     "pymodbus.client",
 ]
+
+
+def product_hidden_imports() -> list[str]:
+    """
+    The product packages, which nothing imports by name.
+
+    The shell resolves a product through importlib from a slug in
+    configuration (see jetpace_core.web.products), which is invisible to
+    PyInstaller's static analysis. Without these the frozen application
+    starts, answers /healthz with ok:true, and silently serves no product
+    pages at all - so smoke_test() below checks the count rather than
+    trusting this list.
+    """
+    names = []
+    for src in SRCS:
+        for package in sorted(p for p in src.iterdir() if p.is_dir()):
+            if package.name == "jetpace_core":
+                continue
+            names.append(package.name)
+            if (package / "web").is_dir():
+                names.append(f"{package.name}.web")
+    return names
 
 # The provisioning binary imports the setup scripts as modules, which
 # PyInstaller cannot see by following imports from provision_entry.py
@@ -111,8 +157,9 @@ def pyinstaller(name: str, entry: Path, hidden: list[str],
         "--distpath", str(DIST),
         "--workpath", str(WORK),
         "--specpath", str(WORK),
-        "--paths", str(SRC),
     ]
+    for source_root in SRCS:
+        args += ["--paths", str(source_root)]
     for extra in (extra_paths or []):
         args += ["--paths", str(extra)]
     args += [
@@ -222,6 +269,27 @@ def smoke_test() -> None:
     else:
         say("the frozen build resolves its own install root correctly")
 
+    # And that every product made it in.
+    #
+    # This is the check that cannot be made from a source checkout. The
+    # shell resolves a product with importlib from a slug in config, so
+    # PyInstaller cannot see the import; a missing --hidden-import gives a
+    # bundle that starts, answers /healthz with ok:true and has no
+    # product pages. `where` prints one line per product, so a die() here
+    # turns a silent customer-site fault into a failed build.
+    expected = sorted(name[len("jetpace_"):]
+                      for name in product_hidden_imports()
+                      if "." not in name)
+    missing = [slug for slug in expected
+               if not re.search(rf"^\s+{re.escape(slug)}\s+present\s*$",
+                                r.stdout, re.MULTILINE)]
+    if missing:
+        die(f"the frozen build is missing {', '.join(missing)}.\n\n"
+            f"  The shell imports a product by name, which PyInstaller "
+            f"cannot see.\n"
+            f"  Check product_hidden_imports() in this file.")
+    say(f"the frozen build carries every product: {', '.join(expected)}")
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(
@@ -247,7 +315,11 @@ def main() -> int:
     DIST.mkdir(parents=True, exist_ok=True)
     print(f"\nBuilding {args.version}\n")
 
-    app = pyinstaller("app", APP_ENTRY, APP_HIDDEN, APP_DATA)
+    assets = web_assets()
+    hidden = APP_HIDDEN + product_hidden_imports()
+    say(f"bundling {len(assets)} asset directories and "
+        f"{len(product_hidden_imports())} product modules")
+    app = pyinstaller("app", APP_ENTRY, hidden, assets)
     # PyInstaller names the executable after --name; the application is
     # reached as app\jetpace.exe, so rename it rather than naming the
     # whole bundle 'jetpace' and getting dist\jetpace\jetpace.exe.

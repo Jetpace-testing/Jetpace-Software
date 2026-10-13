@@ -22,6 +22,12 @@ differential pressure. Software only; the customer supplies the PC, the
 instruments and the converters. One install per customer on their own Windows
 machine.
 
+Three workspace packages: `jetpace-core` is the platform and the UI shell,
+`jetpace-energy` and `jetpace-environment` are the products. **Core must never
+import a product** — it reaches one only through `jetpace_core.web.products`,
+which resolves a slug from `config/products.toml`. A test scans core's source
+for violations. `architecture.md` §3 has the seam.
+
 Successor to two systems that stay in production throughout: **Meril EMS**
 (`D:\Meril EMS` — 236 meters, 15 gateways, TypeScript/Fastify/SQL Server, the
 billing engine) and **Meril RTD** (the platform: roles, alarms, PDF reports, and
@@ -31,7 +37,7 @@ complete domain, RTD the more complete platform.
 ## Commands
 
 ```bash
-uv run pytest -q                                  # 70 tests; needs nothing running
+uv run pytest -q                                  # 427 tests; needs nothing running
 uv run python scripts/run_web.py                  # dashboard on 127.0.0.1:1885
 python scripts/register_service.py --status        # the PostgreSQL service
 ```
@@ -59,7 +65,8 @@ Full detail and rationale in [architecture.md](architecture.md) §7.
   blank always carries a status; never substitute a plausible guess.
 - `reading` and the audit log are **append-only** for the application role.
 - Modbus writes are disabled **at build time**, not by configuration.
-- `registers.NEVER_WRITE` must never be written — it costs a site visit.
+- `jetpace_environment.registers.NEVER_WRITE` must never be written — it costs a
+  site visit.
 - Signed values are two's complement. Wire address = datasheet number − 40001.
 - Register maps stay pinned to datasheets by tests.
 - Every table carries `tenant_id` and every query filters on it.

@@ -18,7 +18,11 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "packages" / "core" / "src"))
+# Every package, not just core: the dashboard imports a product by name
+# from configuration, so core alone would start and then fail to find the
+# product it was told to serve.
+for _src in sorted((ROOT / "packages").glob("*/src")):
+    sys.path.insert(0, str(_src))
 
 from jetpace_core.cli import main                               # noqa: E402
 

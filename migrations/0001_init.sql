@@ -72,8 +72,10 @@ CREATE TABLE gateway (
 
 -- A datasheet revision that moves a register is a NEW row, never an edit,
 -- so that readings already stored stay decodable. The register map itself
--- lives in code (jetpace_core.registers) and is pinned to the datasheet by
--- tests; this table records which map a device was read with.
+-- lives in code, in the product package that sells the instrument -
+-- jetpace_environment.registers for the pressure transmitters - and is
+-- pinned to the datasheet by tests; this table records which map a device
+-- was read with.
 CREATE TABLE device_model (
     id              bigserial PRIMARY KEY,
     code            text      NOT NULL,

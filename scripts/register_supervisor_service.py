@@ -204,7 +204,19 @@ def set_service_environment(config: Path) -> None:
     jetpace_core.service, and in a source checkout that package is not
     installed anywhere Python would look by itself.
     """
-    entries = f"{CONFIG_ENV}={config}\\0PYTHONPATH={ROOT / 'packages' / 'core' / 'src'}"
+    # Every workspace member, not just core. One directory was right while
+    # core was the only package; it stops being right as soon as the web
+    # child imports a product, and the symptom is a service that dies at
+    # boot with nothing in the event log. Globbed so a third product needs
+    # no edit, and so this shared script names neither product.
+    #
+    # Two separators in one string, and mixing them up would quietly
+    # create a bogus third registry entry: `\0` is REG_MULTI_SZ's entry
+    # separator, which `reg add` parses, while os.pathsep (';') is what
+    # Python splits PYTHONPATH on.
+    sources = os.pathsep.join(
+        str(p) for p in sorted((ROOT / "packages").glob("*/src")))
+    entries = f"{CONFIG_ENV}={config}\\0PYTHONPATH={sources}"
     key = f"HKLM\\SYSTEM\\CurrentControlSet\\Services\\{SERVICE}"
     r = run(["reg", "add", key, "/v", "Environment", "/t", "REG_MULTI_SZ",
              "/d", entries, "/f"])

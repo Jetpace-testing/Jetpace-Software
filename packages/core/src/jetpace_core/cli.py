@@ -193,9 +193,17 @@ def cmd_web(args: argparse.Namespace) -> int:
     import uvicorn
 
     from .web.app import create_app
+    from .web.products import load_default
 
-    app = create_app(paths.postgres_dsn())
+    # Which products this install serves, from config/products.toml or
+    # from whatever is installed. Printed below because a missing product
+    # is otherwise invisible - the dashboard comes up, answers /healthz
+    # and is simply missing a tab.
+    enabled = load_default()
+    app = create_app(paths.postgres_dsn(), enabled)
     print(f"\n  dashboard   http://{args.host}:{args.port}/", flush=True)
+    print(f"  products    "
+          f"{', '.join(p.slug for p in enabled) or 'none'}", flush=True)
     print(f"  health      http://{args.host}:{args.port}/healthz", flush=True)
     print(f"  api docs    http://{args.host}:{args.port}/api/docs\n",
           flush=True)
@@ -223,6 +231,21 @@ def cmd_where(args: argparse.Namespace) -> int:
     for name in ("app_password", "mqtt_password", "pg_password"):
         p = paths.data_dir() / name
         print(f"  {name:16} {'present' if p.exists() else 'MISSING'}")
+
+    # Which products this install can actually serve. Printed here rather
+    # than in a subcommand of its own so that the build's existing smoke
+    # test - which already runs `jetpace where` against the frozen
+    # executable - can assert on it. A product reached by
+    # importlib.import_module is invisible to PyInstaller's analysis, so
+    # the failure this guards against is a frozen app that starts
+    # healthily and silently serves no product pages.
+    from .web import products as products_
+    print()
+    configured = products_.enabled()
+    print(f"  products     {'from config' if configured else 'whatever is installed'}")
+    for slug in (configured if configured else products_.KNOWN):
+        ok = products_.importable(slug)
+        print(f"  {slug:16} {'present' if ok else 'MISSING'}")
     print()
     return 0
 

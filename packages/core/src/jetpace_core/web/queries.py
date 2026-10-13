@@ -56,32 +56,6 @@ SELECT
     (SELECT max(ts) FROM reading)                                       AS newest
 """
 
-# The cleanroom figures, which used to sit in SUMMARY above and so were
-# computed for every page including the energy one. Rooms and excursions
-# mean nothing to a customer who bought the energy product, and a shared
-# query that knows the word 'dp' is the shared layer knowing about a
-# product.
-ENVIRONMENT_SUMMARY = """
-WITH dp AS (
-    SELECT DISTINCT ON (r.device_id)
-           r.device_id, r.value, r.ts
-    FROM   reading r
-    JOIN   device d    ON d.id = r.device_id AND d.retired_at IS NULL
-    JOIN   parameter p ON p.id = r.param AND p.key = 'dp'
-    ORDER  BY r.device_id, r.ts DESC
-)
-SELECT
-    (SELECT count(*) FROM dp)                                     AS rooms_total,
-    (SELECT count(*) FROM dp WHERE value > 0)                     AS rooms_in_spec,
-    -- Each raw reading stands for one minute, so counting rows IS a
-    -- duration. True only while every pressure point shares a 1-minute
-    -- scan class; see the note on EXCURSIONS below.
-    (SELECT count(*) FROM reading r
-       JOIN parameter p ON p.id = r.param AND p.key = 'dp'
-      WHERE r.ts > now() - interval '24 hours' AND r.value <= 0)   AS excursions_24h
-"""
-
-
 # ---------------------------------------------------------------------------
 # the live table
 # ---------------------------------------------------------------------------
@@ -114,98 +88,20 @@ ORDER  BY d.id, p.key, r.ts DESC
 """
 
 
-# ---------------------------------------------------------------------------
-# pressure trend - from the hourly rollup, not from raw
-#
-# 24 hours of raw data for three rooms is 4,320 rows; the same window from
-# reading_hourly is 72. The chart cannot tell the difference and the
-# database very much can.
-# ---------------------------------------------------------------------------
-
-DP_TREND = """
-SELECT d.code,
-       d.name,
-       h.bucket,
-       round(h.avg_value::numeric, 1) AS avg,
-       round(h.min_value::numeric, 1) AS min,
-       round(h.max_value::numeric, 1) AS max
-FROM   reading_hourly h
-JOIN   device d    ON d.id = h.device_id AND d.retired_at IS NULL
-JOIN   parameter p ON p.id = h.param AND p.key = 'dp'
-WHERE  h.bucket > now() - %(hours)s * interval '1 hour'
-ORDER  BY d.code, h.bucket
-"""
-
-
-# ---------------------------------------------------------------------------
-# excursions
-#
-# Each raw reading stands for one minute, so counting rows IS a duration.
-# That holds only while every pressure point is on a 1-minute scan class;
-# when scan classes diverge this must become a real time-weighted
-# calculation. Stated here because it is load-bearing and invisible.
-# ---------------------------------------------------------------------------
-
-EXCURSIONS = """
-SELECT d.code,
-       d.name,
-       count(*) FILTER (WHERE r.value <= 0)                   AS minutes_below_zero,
-       count(*)                                               AS minutes_total,
-       round(min(r.value)::numeric, 1)                        AS worst,
-       count(*) FILTER (WHERE r.value <= 0) = 0               AS clean
-FROM   reading r
-JOIN   device d    ON d.id = r.device_id AND d.retired_at IS NULL
-JOIN   parameter p ON p.id = r.param AND p.key = 'dp'
-WHERE  r.ts > now() - %(days)s * interval '1 day'
-GROUP  BY d.code, d.name
-ORDER  BY minutes_below_zero DESC, d.code
-"""
-
-
-# ---------------------------------------------------------------------------
-# energy - through consumption(), so the statuses are the real ones
-# ---------------------------------------------------------------------------
-
-ENERGY_DAILY = """
-SELECT d.code,
-       d.name,
-       day::date                              AS day,
-       round((close_value - open_value)::numeric, 1) AS used
-FROM   reading_daily h
-JOIN   device d    ON d.id = h.device_id AND d.retired_at IS NULL
-JOIN   parameter p ON p.id = h.param AND p.key = 'kwh_import'
-WHERE  day > now() - %(days)s * interval '1 day'
-  AND  close_value >= open_value          -- a reset is not a day's consumption
-ORDER  BY d.code, day
-"""
-
-ENERGY_PERIOD = """
-SELECT d.code,
-       d.name,
-       round(c.used::numeric, 1)   AS used,
-       c.status,
-       c.period_start::date        AS period_start,
-       c.period_end::date          AS period_end
-FROM   device d
-JOIN   parameter p ON p.key = 'kwh_import'
-CROSS  JOIN LATERAL consumption(d.id, p.id,
-             now() - %(days)s * interval '1 day', now()) c
-WHERE  d.retired_at IS NULL
-  AND  EXISTS (SELECT 1 FROM reading_daily rd
-                WHERE rd.device_id = d.id AND rd.param = p.id)
-ORDER  BY d.code
-"""
+# The pressure trend, the excursion count and the two energy queries used
+# to sit here. They are now jetpace_environment.queries and
+# jetpace_energy.queries, because each of them named a parameter key and
+# so could only ever serve one product.
 
 
 # ---------------------------------------------------------------------------
 # the device list and one device's detail
 #
-# Neither mentions a parameter key. dp_trend and energy_daily above are
-# tied to 'dp' and 'kwh_import', which is why neither can serve a device
-# page - and why those two belong to a product view rather than to the
-# shell. These are the shell's own queries: they work for a pressure
-# transmitter, an energy meter or a particle counter without being told
-# which it is.
+# Nothing below mentions a parameter key, and that is the property worth
+# protecting: these queries work for a pressure transmitter, an energy
+# meter or a particle counter without being told which they are serving.
+# A key appearing here means the shell has quietly become one product's
+# shell again, which is what test_web_shell.py checks.
 # ---------------------------------------------------------------------------
 
 DEVICES = f"""
@@ -363,39 +259,9 @@ def summary(conn: psycopg.Connection) -> dict:
         return cur.fetchone() or {}
 
 
-def environment_summary(conn: psycopg.Connection) -> dict:
-    with conn.cursor() as cur:
-        cur.execute(ENVIRONMENT_SUMMARY)
-        return cur.fetchone() or {}
-
-
 def live(conn: psycopg.Connection) -> list[dict]:
     with conn.cursor() as cur:
         cur.execute(LIVE)
-        return cur.fetchall()
-
-
-def dp_trend(conn: psycopg.Connection, hours: int = 24) -> list[dict]:
-    with conn.cursor() as cur:
-        cur.execute(DP_TREND, {"hours": hours})
-        return cur.fetchall()
-
-
-def excursions(conn: psycopg.Connection, days: int = 7) -> list[dict]:
-    with conn.cursor() as cur:
-        cur.execute(EXCURSIONS, {"days": days})
-        return cur.fetchall()
-
-
-def energy_daily(conn: psycopg.Connection, days: int = 7) -> list[dict]:
-    with conn.cursor() as cur:
-        cur.execute(ENERGY_DAILY, {"days": days})
-        return cur.fetchall()
-
-
-def energy_period(conn: psycopg.Connection, days: int = 7) -> list[dict]:
-    with conn.cursor() as cur:
-        cur.execute(ENERGY_PERIOD, {"days": days})
         return cur.fetchall()
 
 

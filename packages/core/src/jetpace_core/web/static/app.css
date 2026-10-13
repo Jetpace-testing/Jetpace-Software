@@ -102,12 +102,27 @@ header.top .clock { margin-left: auto; color: var(--muted); font-size: 12.5px;
            text-transform: uppercase; color: var(--muted); margin: 0 0 4px; }
 .tile dd { margin: 0; font-size: 25px; font-weight: 600; letter-spacing: -.02em; }
 .tile dd small { font-size: 13px; font-weight: 500; color: var(--muted); }
+/* A generic pair, and they have to stay a pair. `.tile.alarm` is core's
+ * own - a stale point on the device page uses it - so its counterpart
+ * belongs here too; it was called `.tile.clean`, which reads as a
+ * cleanroom word for what is really just "good". Renamed to match the
+ * .pill.good vocabulary below rather than moved into one product and
+ * leaving half a pair behind. */
 .tile.alarm dd { color: var(--critical); }
-.tile.clean dd { color: var(--good-ink); }
+.tile.good  dd { color: var(--good-ink); }
 
 /* ---------- sections ---------- */
 
 section { margin: 0 0 30px; }
+
+/* A page's standfirst: what the page is for, in one sentence, before the
+ * numbers. Both product views open with one and it had no rule anywhere -
+ * so it has been rendering as a plain paragraph since it was written. It
+ * is shell vocabulary, not a product's: the shape must not differ between
+ * the two landing pages, which is exactly what would happen if each
+ * product's own stylesheet defined it. */
+.lede { max-width: 62ch; margin: 0 0 20px; color: var(--ink-2);
+        font-size: 14px; line-height: 1.55; }
 section > h2 {
   font-size: 12px; font-weight: 650; letter-spacing: .08em;
   text-transform: uppercase; color: var(--muted);
@@ -179,50 +194,17 @@ button.toggle:focus-visible { outline: 2px solid var(--series-1); outline-offset
 /* the table view that satisfies the relief rule */
 .table-view[hidden] { display: none; }
 
-/* ---------- bars drawn in plain HTML, no library needed ---------- */
-
-.barrow { display: grid; grid-template-columns: 150px 1fr 74px; gap: 12px;
-          align-items: center; padding: 7px 14px; }
-.barrow + .barrow { border-top: 1px solid var(--grid); }
-.barrow .label { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis;
-                 white-space: nowrap; }
-/* Both of these MUST be block. They are spans, and an inline element
- * ignores width - which made every bar render at zero pixels while the
- * percentages in the markup were perfectly correct. Caught by looking at
- * the page, not by reading the code. */
-.bartrack { display: block; background: var(--grid); border-radius: 3px;
-            height: 10px; position: relative; overflow: hidden; }
-.barfill  { display: block; height: 100%; border-radius: 3px;
-            background: var(--series-1); }
-.barfill.critical { background: var(--critical); }
-.barrow .value { text-align: right; font-variant-numeric: tabular-nums;
-                 color: var(--ink); font-weight: 600; }
+/* The excursion bars and the small-multiples grid were here. Both were
+ * used by exactly one template, environment.html, so they are now
+ * packages/environment/.../web/static/environment.css - loaded by the
+ * shell only when that product is enabled. They still use the tokens
+ * defined above, because a product stylesheet is always served after
+ * this one. */
 
 footer.foot { margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--hairline);
               color: var(--muted); font-size: 12px; }
 
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
-
-/* ---------- small multiples ----------
- *
- * Six rooms is too many for one line chart, and cycling categorical hues
- * past the validated three is not allowed. One small chart per room, each
- * a SINGLE series on a shared scale, solves both: identity comes from the
- * title rather than from colour, so no categorical palette is needed at
- * all, and it stays readable at the forty rooms a real facility has.
- */
-
-.smalls { display: grid; gap: 1px; background: var(--hairline);
-          grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
-.small { background: var(--surface); padding: 10px 12px 4px; }
-.small .head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
-.small .head b { font-size: 12.5px; font-weight: 600; }
-.small .head .code { font-size: 11px; color: var(--muted); }
-.small .head .now { margin-left: auto; font-size: 12px; font-weight: 600;
-                    font-variant-numeric: tabular-nums; }
-.small .mini { height: 92px; width: 100%; }
-.small .thin { height: 92px; display: flex; align-items: center;
-               justify-content: center; color: var(--muted); font-size: 12px; }
 
 /* ===========================================================================
  * The shell: navigation, breadcrumbs, controls, the device pages.

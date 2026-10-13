@@ -15,7 +15,7 @@ out of the poller keeps it out of the web layer.
 
 from __future__ import annotations
 
-from collections import defaultdict
+from collections.abc import Sequence
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -23,6 +23,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from . import products as products_
 from . import queries
 
 HERE = Path(__file__).resolve().parent
@@ -68,10 +69,46 @@ def window_label(hours: float) -> str:
 
 
 
-def create_app(dsn: str) -> FastAPI:
+def create_app(dsn: str,
+               products: Sequence[products_.Product] = ()) -> FastAPI:
+    """
+    The shell, plus whatever products were handed to it.
+
+    `products` is a sequence rather than something this function looks up,
+    so core never decides which products exist - see web/products.py. An
+    app with none still serves the overview and the device pages, which is
+    what makes those tests independent of either product.
+    """
     app = FastAPI(title="Jetpace", docs_url="/api/docs")
+
+    # Product static BEFORE core's. Starlette matches mounts in the order
+    # they are registered and "/static" is a prefix of
+    # "/static/environment", so mounting core first would swallow every
+    # product asset and serve a 404 from the wrong directory.
+    for product in products:
+        if product.static is not None:
+            app.mount(f"/static/{product.slug}",
+                      StaticFiles(directory=product.static),
+                      name=f"static-{product.slug}")
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
-    templates = Jinja2Templates(directory=HERE / "templates")
+
+    # One Jinja environment over several directories, so a product
+    # template can `{% extends "_base.html" %}` and get the real shell.
+    # Core first: FileSystemLoader returns the first match, so a product
+    # cannot shadow a shell template - and because that resolution is
+    # silent, test_web_shell.py asserts no basename appears twice.
+    templates = Jinja2Templates(
+        directory=[HERE / "templates", *(p.templates for p in products)])
+
+    # The navigation follows what is loaded. It used to be four literal
+    # links in _base.html, two of which named products, so a customer who
+    # had bought one product had a tab for the other that led to a 404.
+    templates.env.globals["products"] = [
+        {"slug": p.slug, "label": p.label,
+         "stylesheet": (f"/static/{p.slug}/{p.stylesheet}"
+                        if p.stylesheet else None)}
+        for p in products
+    ]
 
     def rows_for_live(conn):
         """Group the flat live query into one entry per device."""
@@ -106,31 +143,11 @@ def create_app(dsn: str) -> FastAPI:
                 "devices": rows_for_live(conn),
             })
 
-    # --- the product views ----------------------------------------------
-    #
-    # Separate routes, separate templates, and the parameter keys they are
-    # about ('dp', 'kwh_import') appear only here and in the queries these
-    # call. The shell above mentions neither.
-    #
-    # architecture.md §3 has these becoming packages/energy and
-    # packages/environment, with environment pinning a validated core
-    # version while energy tracks head. This is the seam that makes that a
-    # file move rather than a redesign.
-
-    @app.get("/environment", response_class=HTMLResponse)
-    def environment(request: Request):
-        with queries.connect(dsn) as conn:
-            return templates.TemplateResponse(request, "environment.html", {
-                "summary": queries.environment_summary(conn),
-                "excursions": queries.excursions(conn, days=7),
-            })
-
-    @app.get("/energy", response_class=HTMLResponse)
-    def energy(request: Request):
-        with queries.connect(dsn) as conn:
-            return templates.TemplateResponse(request, "energy.html", {
-                "energy": queries.energy_period(conn, days=7),
-            })
+    # The product views used to be four routes here - /environment,
+    # /energy and their two APIs - with the parameter keys 'dp' and
+    # 'kwh_import' in the queries they called. They are now
+    # packages/environment and packages/energy, mounted at the bottom of
+    # this function, and nothing in this file names either of them.
 
     @app.get("/partials/live", response_class=HTMLResponse)
     def partial_live(request: Request):
@@ -213,47 +230,6 @@ def create_app(dsn: str) -> FastAPI:
             "rows": len(points), "points": points,
         })
 
-    @app.get("/api/dp-trend")
-    def api_dp_trend(hours: int = 24):
-        """
-        ECharts wants series, so shape it here rather than in JavaScript.
-
-        One series per room, each a list of [epoch_ms, avg]. min and max
-        travel alongside so the tooltip can show the range the hour
-        actually covered - an average alone hides the excursion that
-        matters.
-        """
-        with queries.connect(dsn) as conn:
-            rows = queries.dp_trend(conn, hours=hours)
-
-        series: dict[str, dict] = {}
-        for r in rows:
-            s = series.setdefault(r["code"], {
-                "code": r["code"], "name": r["name"],
-                "avg": [], "min": [], "max": [],
-            })
-            ms = int(r["bucket"].timestamp() * 1000)
-            s["avg"].append([ms, float(r["avg"])])
-            s["min"].append([ms, float(r["min"])])
-            s["max"].append([ms, float(r["max"])])
-        return JSONResponse({"hours": hours,
-                             "series": sorted(series.values(),
-                                              key=lambda s: s["code"])})
-
-    @app.get("/api/energy-daily")
-    def api_energy_daily(days: int = 7):
-        with queries.connect(dsn) as conn:
-            rows = queries.energy_daily(conn, days=days)
-        series: dict[str, dict] = defaultdict(
-            lambda: {"code": "", "name": "", "points": []})
-        for r in rows:
-            s = series[r["code"]]
-            s["code"], s["name"] = r["code"], r["name"]
-            s["points"].append([r["day"].isoformat(), float(r["used"] or 0)])
-        return JSONResponse({"days": days,
-                             "series": sorted(series.values(),
-                                              key=lambda s: s["code"])})
-
     @app.get("/healthz")
     def healthz():
         """
@@ -272,6 +248,13 @@ def create_app(dsn: str) -> FastAPI:
         except Exception as exc:                       # noqa: BLE001
             return JSONResponse({"ok": False, "error": str(exc)},
                                 status_code=503)
+
+    # Products last, so a product cannot shadow a shell route by
+    # registering the same path first. /healthz in particular is the
+    # supervisor's release gate and belongs to the platform.
+    shell = products_.Shell(dsn=dsn, templates=templates)
+    for product in products:
+        app.include_router(product.routes(shell))
 
     return app
 

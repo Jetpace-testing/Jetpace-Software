@@ -10,12 +10,12 @@
   </p>
 
   <dl class="tiles">
-    <div class="tile {{ 'clean' if (summary.rooms_in_spec or 0) == (summary.rooms_total or 0) else 'alarm' }}">
+    <div class="tile {{ 'good' if (summary.rooms_in_spec or 0) == (summary.rooms_total or 0) else 'alarm' }}">
       <dt>Rooms in spec</dt>
       <dd>{{ summary.rooms_in_spec or 0 }}
           <small>of {{ summary.rooms_total or 0 }}</small></dd>
     </div>
-    <div class="tile {{ 'alarm' if (summary.excursions_24h or 0) else 'clean' }}">
+    <div class="tile {{ 'alarm' if (summary.excursions_24h or 0) else 'good' }}">
       <dt>Excursion minutes, 24 h</dt>
       <dd>{{ '{:,}'.format(summary.excursions_24h or 0) }}</dd>
     </div>

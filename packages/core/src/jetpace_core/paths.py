@@ -81,9 +81,13 @@ def install_root() -> Path:
     # would stop at packages/core and call it the root. The lock file
     # exists once, at the workspace root, which is the thing being looked
     # for.
+    # Both markers together. A lock file on its own is not proof: a
+    # developer with a stray uv.lock at a drive root would have it win
+    # over the real root, and the symptom would be a search for a
+    # password in C:\.
     here = Path(__file__).resolve()
     for directory in here.parents:
-        if (directory / "uv.lock").exists():
+        if (directory / "uv.lock").exists() and (directory / "packages").is_dir():
             return directory
 
     # No lock file anywhere above: not a workspace checkout, so fall back

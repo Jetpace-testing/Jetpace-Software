@@ -1,56 +1,25 @@
 """
-Register maps, pinned to the manufacturer datasheets.
+Register maps for the instruments this product reads, pinned to the
+manufacturer datasheets.
 
 Every map here is transcribed from a document under `Modbus Mapping/` and
 carries the file name it came from. A datasheet revision that moves a
 register gets a NEW map with a new revision string, never an edit to an
 existing one, so that history stays decodable.
 
-The 4xxxx numbers in the datasheets are the traditional notation for
-holding registers. The wire address is the number minus 40001, so
-DP_PV at 40001 is read with start address 0. Getting this off by one is
-the single most common Modbus mistake, which is why the conversion lives
-in one place and is tested.
+`Register`, `DeviceModel` and `wire_address` come from
+`jetpace_core.devices`: the 40001-offset rule is true of any Modbus
+device and is a platform invariant, while which registers an iDP-100 has
+is this product's business. The two were one file until the products were
+split.
 """
 
-from dataclasses import dataclass
+from __future__ import annotations
 
+from jetpace_core.devices import DeviceModel, Register, wire_address
 
-def wire_address(datasheet_number: int) -> int:
-    """40001 -> 0. The address actually sent on the wire."""
-    return datasheet_number - 40001
-
-
-@dataclass(frozen=True)
-class Register:
-    """One readable value in a device's map."""
-
-    key: str
-    datasheet_number: int
-    kind: str  # 's16' | 'u16' | 'f32'
-    unit: str
-    label: str
-    writable: bool = False
-
-    @property
-    def address(self) -> int:
-        return wire_address(self.datasheet_number)
-
-
-@dataclass(frozen=True)
-class DeviceModel:
-    code: str
-    revision: str
-    vendor: str
-    datasheet_ref: str
-    registers: tuple[Register, ...]
-
-    def by_key(self, key: str) -> Register:
-        for r in self.registers:
-            if r.key == key:
-                return r
-        raise KeyError(f"{self.code} has no register {key!r}")
-
+__all__ = ["DeviceModel", "Register", "wire_address",
+           "IDP100", "UNIT_MMWC", "UNIT_PA", "BAUD_RATES", "NEVER_WRITE"]
 
 # ---------------------------------------------------------------------------
 # Jetpace iDP-100 differential pressure transmitter

@@ -17,6 +17,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}Jetpace{% endblock %}</title>
 <link rel="stylesheet" href="/static/app.css">
+{# Each loaded product's own stylesheet, and only those. A cleanroom
+   install does not fetch the energy CSS and has no rules for elements it
+   will never render. `products or []` because a template rendered outside
+   create_app - a compile check, a unit test - has no products global. #}
+{% for p in products or [] %}{% if p.stylesheet %}
+<link rel="stylesheet" href="{{ p.stylesheet }}">
+{% endif %}{% endfor %}
 {# Vendored, not from a CDN: a plant network often has no route out, and
    that is also why there is no build step. #}
 <script src="/static/vendor/htmx.min.js" defer></script>
@@ -31,10 +38,6 @@
     <span class="clock" id="clock"></span>
   </header>
 
-  {# Only what exists. Environment and Energy arrive when the overview's
-     product-specific panels are split into their own views - adding the
-     links before the pages would mean shipping two 404s in the
-     navigation, which is worse than a short nav. #}
   {# The block has to be DEFINED here for a child to override it, and
      wherever it is defined it renders. Inside a comment, so reading it
      with self.nav() below costs nothing visible - and the comment is
@@ -45,12 +48,17 @@
     {% set here = self.nav() | trim %}
     <a href="/"        class="{{ 'current' if here == 'overview' }}">Overview</a>
     <a href="/devices" class="{{ 'current' if here == 'devices' }}">Devices</a>
-    {# Both products appear while one install serves both. A customer who
-       has bought one should not have a tab for the other to ignore - §3
-       settles that by shipping two applications over a shared core, and
-       this list then follows which one is installed. #}
-    <a href="/environment" class="{{ 'current' if here == 'environment' }}">Environment</a>
-    <a href="/energy"      class="{{ 'current' if here == 'energy' }}">Energy</a>
+    {# The products this install actually serves, in the order core loaded
+       them. These were two literal links, Environment and Energy, which
+       meant a customer who had bought one had a tab for the other that
+       led to a 404 - and the shell naming a product was the coupling §3
+       exists to remove. A page says which tab it is with
+       `{% block nav %}<slug>{% endblock %}`, matched here against the
+       slug, so nothing has to be kept in step by hand. #}
+    {% for p in products or [] %}
+      <a href="/{{ p.slug }}"
+         class="{{ 'current' if here == p.slug }}">{{ p.label }}</a>
+    {% endfor %}
   </nav>
 
   {% block content %}{% endblock %}

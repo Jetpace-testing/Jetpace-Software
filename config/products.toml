@@ -1,0 +1,22 @@
+# Which products this install serves.
+#
+# One frozen bundle carries every product, and this is what decides which
+# of them a given site actually gets: its routes, its pages and its tab in
+# the navigation. A customer who has bought the environmental product
+# should not have an Energy tab to wonder about.
+#
+# Names are the package suffix: "environment" is jetpace_environment.
+# Asking for a product that is not in the build is an error at startup,
+# not a smaller dashboard - see jetpace_core.web.products.
+#
+# Delete this file, or this key, and the install serves whatever products
+# it happens to contain. That is the right default for a developer
+# checkout and the wrong one for a site, which is why a site gets the
+# file.
+#
+# It lives in config/ rather than version.json deliberately: version.json
+# is replaced by every over-the-air update, so a product selection kept
+# there would silently reset to whatever the release shipped. Nothing in
+# an update touches config/.
+
+enabled = ["environment", "energy"]

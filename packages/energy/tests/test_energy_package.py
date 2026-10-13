@@ -28,3 +28,33 @@ def test_the_product_can_see_core():
     from jetpace_core import paths
 
     assert paths.install_root().is_dir()
+
+
+# --- the descriptor core composes -----------------------------------------
+
+def test_the_product_describes_itself_to_the_shell():
+    from jetpace_energy.web import product
+
+    p = product()
+    assert p.slug == "energy"
+    assert p.label == "Energy"
+
+
+def test_the_product_ships_its_page():
+    from jetpace_energy.web import product
+
+    assert (product().templates / "energy.html").is_file()
+
+
+def test_the_product_declares_no_stylesheet():
+    """
+    Deliberate: this product's chart code is inline in its template and
+    it uses no CSS core does not already define. Asserted rather than
+    left implicit, because the wrong way to fix a missing rule would be
+    to add it to core's app.css.
+    """
+    from jetpace_energy.web import product
+
+    p = product()
+    assert p.stylesheet is None
+    assert p.static is None

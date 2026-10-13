@@ -1,0 +1,54 @@
+/* ===========================================================================
+ * The environmental product's own styles.
+ *
+ * Moved out of core's app.css, where they were the only product-specific
+ * selectors in a stylesheet every page of every install downloads. Both
+ * blocks below are used by exactly one template, environment.html.
+ *
+ * Loaded by the shell AFTER app.css, and only when this product is
+ * enabled, which is what lets every rule here use core's tokens -
+ * var(--grid), var(--series-1), var(--critical), var(--surface),
+ * var(--hairline), var(--ink), var(--ink-2), var(--muted) - without
+ * defining a single colour of its own. Nothing here may introduce a
+ * colour: the palette has one home and it is core's :root.
+ * ======================================================================== */
+
+/* ---------- bars drawn in plain HTML, no library needed ---------- */
+
+.barrow { display: grid; grid-template-columns: 150px 1fr 74px; gap: 12px;
+          align-items: center; padding: 7px 14px; }
+.barrow + .barrow { border-top: 1px solid var(--grid); }
+.barrow .label { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis;
+                 white-space: nowrap; }
+/* Both of these MUST be block. They are spans, and an inline element
+ * ignores width - which made every bar render at zero pixels while the
+ * percentages in the markup were perfectly correct. Caught by looking at
+ * the page, not by reading the code. */
+.bartrack { display: block; background: var(--grid); border-radius: 3px;
+            height: 10px; position: relative; overflow: hidden; }
+.barfill  { display: block; height: 100%; border-radius: 3px;
+            background: var(--series-1); }
+.barfill.critical { background: var(--critical); }
+.barrow .value { text-align: right; font-variant-numeric: tabular-nums;
+                 color: var(--ink); font-weight: 600; }
+
+/* ---------- small multiples ----------
+ *
+ * Six rooms is too many for one line chart, and cycling categorical hues
+ * past the validated three is not allowed. One small chart per room, each
+ * a SINGLE series on a shared scale, solves both: identity comes from the
+ * title rather than from colour, so no categorical palette is needed at
+ * all, and it stays readable at the forty rooms a real facility has.
+ */
+
+.smalls { display: grid; gap: 1px; background: var(--hairline);
+          grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+.small { background: var(--surface); padding: 10px 12px 4px; }
+.small .head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
+.small .head b { font-size: 12.5px; font-weight: 600; }
+.small .head .code { font-size: 11px; color: var(--muted); }
+.small .head .now { margin-left: auto; font-size: 12px; font-weight: 600;
+                    font-variant-numeric: tabular-nums; }
+.small .mini { height: 92px; width: 100%; }
+.small .thin { height: 92px; display: flex; align-items: center;
+               justify-content: center; color: var(--muted); font-size: 12px; }

@@ -26,6 +26,13 @@ jetpace-environment = { workspace = true }
 dev = [
     "pyinstaller>=6.11",
     "pytest>=8.0",
+    # Starlette's TestClient needs it. Test-only: nothing in the
+    # application imports httpx, so it is not followed into the frozen
+    # bundle. Added for the product-composition tests, where the bugs are
+    # at the HTTP layer - a static mount registered in the wrong order
+    # serves a 404 and is invisible to any test that only inspects
+    # objects. Still needs nothing running: no server, no database.
+    "httpx2>=0.28",
 ]
 
 [tool.pytest.ini_options]

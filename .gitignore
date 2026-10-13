@@ -25,3 +25,9 @@ installer/vendor/
 # forever - and several are customer-specific. Register maps are pinned to
 # these by tests, so keep the folder, just not in history.
 Modbus Mapping/
+
+# Per-developer Claude Code permissions, not project configuration.
+.claude/settings.local.json
+
+# Written by scripts/register_supervisor_service.py; absolute paths, per machine.
+/supervisor.json

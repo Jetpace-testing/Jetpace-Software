@@ -3,13 +3,24 @@ name = "jetpace"
 version = "0.1.0"
 description = "Jetpace platform - energy and environmental monitoring"
 requires-python = ">=3.12,<3.13"
-dependencies = ["jetpace-core"]
+# The development root depends on all three so that `uv sync` installs
+# everything and the whole suite can run. A customer install is not this
+# root: which products are active there is decided at runtime from
+# config, because one frozen bundle carries all three packages.
+dependencies = [
+    "jetpace-core",
+    "jetpace-energy",
+    "jetpace-environment",
+]
 
 [tool.uv.workspace]
+# A glob, so a new package under packages/ is a member without an edit here.
 members = ["packages/*"]
 
 [tool.uv.sources]
 jetpace-core = { workspace = true }
+jetpace-energy = { workspace = true }
+jetpace-environment = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -18,5 +29,17 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/core/tests"]
-pythonpath = ["packages/core/src"]
+# Listed rather than globbed. `packages/*/tests` would also work, but a
+# glob silently matches nothing when a directory is missing or misnamed,
+# and the failure mode of this setting is a suite that runs fewer tests
+# than it should while still reporting success.
+testpaths = [
+    "packages/core/tests",
+    "packages/energy/tests",
+    "packages/environment/tests",
+]
+pythonpath = [
+    "packages/core/src",
+    "packages/energy/src",
+    "packages/environment/src",
+]

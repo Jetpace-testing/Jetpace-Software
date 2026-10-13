@@ -6,6 +6,8 @@ requires-python = "==3.12.*"
 members = [
     "jetpace",
     "jetpace-core",
+    "jetpace-energy",
+    "jetpace-environment",
 ]
 
 [[package]]
@@ -189,6 +191,8 @@ version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
     { name = "jetpace-core" },
+    { name = "jetpace-energy" },
+    { name = "jetpace-environment" },
 ]
 
 [package.dev-dependencies]
@@ -198,7 +202,11 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "jetpace-core", editable = "packages/core" }]
+requires-dist = [
+    { name = "jetpace-core", editable = "packages/core" },
+    { name = "jetpace-energy", editable = "packages/energy" },
+    { name = "jetpace-environment", editable = "packages/environment" },
+]
 
 [package.metadata.requires-dev]
 dev = [
@@ -232,6 +240,28 @@ requires-dist = [
     { name = "pywin32", marker = "sys_platform == 'win32'", specifier = ">=306" },
     { name = "uvicorn", specifier = ">=0.32" },
 ]
+
+[[package]]
+name = "jetpace-energy"
+version = "0.1.0"
+source = { editable = "packages/energy" }
+dependencies = [
+    { name = "jetpace-core" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "jetpace-core", editable = "packages/core" }]
+
+[[package]]
+name = "jetpace-environment"
+version = "0.1.0"
+source = { editable = "packages/environment" }
+dependencies = [
+    { name = "jetpace-core" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "jetpace-core", editable = "packages/core" }]
 
 [[package]]
 name = "jinja2"

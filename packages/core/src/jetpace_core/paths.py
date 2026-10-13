@@ -91,6 +91,37 @@ def config_dir() -> Path:
     return install_root() / "config"
 
 
+def _either(installed: str, *checkout: str) -> Path:
+    """
+    A payload directory, named differently in the two layouts.
+
+    An installer lays PostgreSQL down at <root>\\pgsql. A checkout keeps it
+    at installer\\vendor\\pgsql, because there it is a build artefact that
+    is fetched and pinned rather than something shipped. Whichever exists
+    wins; the installed name is the fallback, since that is the layout a
+    customer has.
+    """
+    root = install_root()
+    for candidate in (root.joinpath(installed), root.joinpath(*checkout)):
+        if candidate.is_dir():
+            return candidate
+    return root / installed
+
+
+def pgsql_dir() -> Path:
+    """PostgreSQL and TimescaleDB binaries."""
+    return _either("pgsql", "installer", "vendor", "pgsql")
+
+
+def mosquitto_dir() -> Path:
+    """The broker binaries."""
+    return _either("mosquitto", "installer", "vendor", "mosquitto")
+
+
+def migrations_dir() -> Path:
+    return install_root() / "migrations"
+
+
 def logs_dir() -> Path:
     return data_dir() / "logs"
 

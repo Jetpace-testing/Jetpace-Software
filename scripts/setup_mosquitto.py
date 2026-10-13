@@ -48,11 +48,17 @@ PORT = 1887                      # 1883 Titan EMS, 1884 a node service,
                                  # the port is a setting, not a constant.
 USER = "jetpace_app"
 
-ROOT = Path(__file__).resolve().parent.parent
-VENDOR = ROOT / "installer" / "vendor" / "mosquitto"
-LOCK = ROOT / "installer" / "vendor" / "vendor.lock.json"
-LOCAL = ROOT / ".local" / "mosquitto"
-LOGS = ROOT / ".local" / "logs"
+# Paths through jetpace_core.paths, not __file__ - see the same note in
+# setup_postgres.py. Frozen, __file__ points inside the PyInstaller bundle.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent
+                       / "packages" / "core" / "src"))
+from jetpace_core import paths                                  # noqa: E402
+
+ROOT = paths.install_root()
+VENDOR = paths.mosquitto_dir()
+LOCK = VENDOR.parent / "vendor.lock.json"
+LOCAL = paths.data_dir() / "mosquitto"
+LOGS = paths.logs_dir()
 CONF = LOCAL / "jetpace.conf"
 PASSWD = LOCAL / "passwd"
 ACL = LOCAL / "acl"
@@ -194,6 +200,19 @@ log_type notice
 # ---------------------------------------------------------------------------
 
 def is_running() -> bool:
+    """
+    A pidfile is no longer the only way the broker runs.
+
+    This script starts it detached and records a pid. The supervisor now
+    starts it as a child instead, and writes no pidfile - so this reported
+    "not running" on the same line as "port open", which is nonsense to
+    leave in front of someone diagnosing a site.
+
+    The port is the authority on whether a broker is answering; the
+    pidfile only says whether THIS script started it.
+    """
+    if port_open():
+        return True
     if not PIDFILE.exists():
         return False
     try:

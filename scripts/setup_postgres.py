@@ -76,14 +76,30 @@ SUPERUSER = "jetpace_super"
 APP_ROLE = "jetpace_app"
 APP_DB = "jetpace"
 
-ROOT = Path(__file__).resolve().parent.parent
-VENDOR = ROOT / "installer" / "vendor"
-PGSQL = VENDOR / "pgsql"
+# Paths come from jetpace_core.paths, not from __file__.
+#
+# `Path(__file__).resolve().parent.parent` is right in a checkout and wrong
+# in a frozen bundle, where __file__ points inside _internal - so this
+# would have initdb'd a cluster into the PyInstaller bundle and written the
+# superuser password beside it. Exactly the bug already found and fixed in
+# the application; the same line was in five provisioning scripts.
+#
+# The two layouts also name things differently: a checkout keeps PostgreSQL
+# at installer\vendor\pgsql because there it is a fetched, pinned build
+# artefact, while an install has it at <root>\pgsql because there it is
+# simply part of the product. paths.pgsql_dir() takes whichever exists.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent
+                       / "packages" / "core" / "src"))
+from jetpace_core import paths                                  # noqa: E402
+
+ROOT = paths.install_root()
+PGSQL = paths.pgsql_dir()
+VENDOR = PGSQL.parent
 LOCK = VENDOR / "vendor.lock.json"
 
-LOCAL = ROOT / ".local"      # gitignored: dev data, logs, secrets
+LOCAL = paths.data_dir()     # .local in a checkout, data\ in an install
 DATA = LOCAL / "pgdata"
-LOGS = LOCAL / "logs"
+LOGS = paths.logs_dir()
 SECRET = LOCAL / "pg_password"
 
 # Directories inside the Postgres zip that are useless on a site PC.
@@ -472,9 +488,48 @@ def write_our_conf() -> None:
                         encoding="utf-8")
 
 
+def port_open() -> bool:
+    import socket
+    with socket.socket() as s:
+        s.settimeout(0.3)
+        return s.connect_ex(("127.0.0.1", PORT)) == 0
+
+
+def service_running() -> bool:
+    """True when the jetpace-postgres service reports RUNNING."""
+    r = subprocess.run(["sc", "query", "jetpace-postgres"],
+                       capture_output=True, text=True, timeout=30)
+    return r.returncode == 0 and "RUNNING" in r.stdout
+
+
 def is_running() -> bool:
-    """pg_ctl status exits 0 when the server is up, 3 when it is not."""
-    return pg_ctl("status").returncode == 0
+    """
+    Is there a server on our data directory?
+
+    `pg_ctl status` alone is no longer enough, and believing it was a
+    landmine. Since PostgreSQL became a Windows service running as
+    NETWORK SERVICE, pg_ctl run from an ordinary shell cannot open the
+    postmaster process to check on it - so it exits 3, "no server
+    running", while the database is answering queries on 5433. Measured:
+    postmaster.pid named a live postgres.exe holding the port, and pg_ctl
+    still said no.
+
+    Acting on that would have had --start begin a SECOND postmaster
+    against the same data directory. PostgreSQL refuses that because of
+    its own lock file, so nothing would be corrupted - but the error
+    blames the lock file rather than the thing that is actually wrong,
+    which is the worst kind of message to leave on a site.
+
+    Three ways to answer yes, because each can be blind on its own:
+    pg_ctl cannot see a service, the service name does not exist on a
+    development machine, and the port says nothing about WHICH server
+    answered.
+    """
+    if pg_ctl("status").returncode == 0:
+        return True
+    if os.name == "nt" and service_running():
+        return True
+    return port_open()
 
 
 def ensure_started() -> None:
@@ -702,11 +757,32 @@ def migrate() -> None:
 # ---------------------------------------------------------------------------
 
 def status() -> None:
-    r = pg_ctl("status")
-    print(r.stdout.strip() or r.stderr.strip())
+    """
+    Report what is true, and where each answer came from.
+
+    This used to print pg_ctl's output verbatim, which meant it said
+    "pg_ctl: no server running" about a database that was serving queries -
+    because pg_ctl cannot see a postmaster owned by a service. Printing
+    the three answers separately makes the disagreement visible instead of
+    picking the wrong one.
+    """
+    print()
+    say(f"data        {DATA}")
+    say(f"binaries    {PGSQL}")
+    pg = pg_ctl("status")
+    say(f"pg_ctl      {(pg.stdout.strip() or pg.stderr.strip()).splitlines()[0]
+                       if (pg.stdout or pg.stderr) else 'no answer'}")
+    if os.name == "nt":
+        say(f"service     {'jetpace-postgres is RUNNING' if service_running()
+                          else 'jetpace-postgres not running or not '
+                               'registered'}")
+    say(f"port        127.0.0.1:{PORT} {'open' if port_open() else 'closed'}")
+    say(f"overall     {'RUNNING' if is_running() else 'not running'}")
     if SECRET.exists():
-        print(f"\n  connection string for the app:")
-        print(f"    postgresql://{APP_ROLE}@127.0.0.1:{PORT}/{APP_DB}")
+        print()
+        say("connection string for the app:")
+        say(f"  postgresql://{APP_ROLE}@127.0.0.1:{PORT}/{APP_DB}")
+    print()
 
 
 def main() -> None:

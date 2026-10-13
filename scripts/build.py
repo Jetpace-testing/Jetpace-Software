@@ -53,6 +53,7 @@ WORK = ROOT / "build" / "pyinstaller"
 # with "attempted relative import with no known parent package".
 APP_ENTRY = ROOT / "scripts" / "app_entry.py"
 SUPERVISOR_ENTRY = ROOT / "scripts" / "run_service.py"
+PROVISION_ENTRY = ROOT / "scripts" / "provision_entry.py"
 
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 
@@ -74,6 +75,14 @@ APP_HIDDEN = [
     "pymodbus.client",
 ]
 
+# The provisioning binary imports the setup scripts as modules, which
+# PyInstaller cannot see by following imports from provision_entry.py
+# because they are imported inside functions.
+PROVISION_HIDDEN = [
+    "setup_postgres", "setup_mosquitto",
+    "register_service", "register_supervisor_service",
+]
+
 SUPERVISOR_HIDDEN = [
     "win32timezone",        # pywin32 loads this lazily inside the service
     "servicemanager", "win32serviceutil", "win32service", "win32event",
@@ -91,7 +100,8 @@ def die(msg: str) -> "NoReturn":  # type: ignore[valid-type]
 
 def pyinstaller(name: str, entry: Path, hidden: list[str],
                 data: list[tuple[Path, str]] | None = None,
-                console: bool = True) -> Path:
+                console: bool = True,
+                extra_paths: list[Path] | None = None) -> Path:
     out = DIST / name
     args = [
         sys.executable, "-m", "PyInstaller",
@@ -102,6 +112,10 @@ def pyinstaller(name: str, entry: Path, hidden: list[str],
         "--workpath", str(WORK),
         "--specpath", str(WORK),
         "--paths", str(SRC),
+    ]
+    for extra in (extra_paths or []):
+        args += ["--paths", str(extra)]
+    args += [
         "--console" if console else "--windowed",
     ]
     for h in hidden:
@@ -245,6 +259,16 @@ def main() -> int:
 
     if not args.app_only:
         pyinstaller("supervisor", SUPERVISOR_ENTRY, SUPERVISOR_HIDDEN)
+        # scripts/ must be importable: provision_entry imports the setup
+        # scripts as modules. They are composition rather than library
+        # code, which is exactly why they are not in the package - so the
+        # path is added here, for this bundle only.
+        setup = pyinstaller("setup", PROVISION_ENTRY, PROVISION_HIDDEN,
+                            extra_paths=[ROOT / "scripts"])
+        built = setup / "setup.exe"
+        if built.exists():
+            built.replace(setup / "jetpace-setup.exe")
+            say("renamed setup.exe to jetpace-setup.exe")
 
     stage_payload(args.version)
     smoke_test()

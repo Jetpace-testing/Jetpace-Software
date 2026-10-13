@@ -1,0 +1,16 @@
+{% extends "_base.html" %}
+{% block title %}Devices &mdash; Jetpace{% endblock %}
+{% block nav %}devices{% endblock %}
+
+{% block content %}
+<section>
+  <h2>Devices
+    <span class="hint">{{ devices | length }} commissioned, refreshes by itself</span>
+  </h2>
+
+  <div id="device-list" hx-get="/partials/devices" hx-trigger="every 10s"
+       hx-swap="innerHTML">
+    {% include "_devices.html" %}
+  </div>
+</section>
+{% endblock %}

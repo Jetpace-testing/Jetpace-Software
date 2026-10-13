@@ -1,22 +1,27 @@
 {# Polled by HTMX every few seconds. Contains the summary tiles and the
    live table, which are the only parts that change on their own. #}
 
+{# Only tiles that mean something for any product. Rooms in spec and
+   excursion minutes moved to /environment: they are meaningless to a
+   customer who bought the energy product, and showing them a permanent
+   "0 of 0" is worse than not showing them. #}
 <dl class="tiles">
   <div class="tile">
     <dt>Devices online</dt>
     <dd>{{ summary.online or 0 }} <small>of {{ summary.devices or 0 }}</small></dd>
   </div>
-  <div class="tile {{ 'clean' if (summary.rooms_in_spec or 0) == (summary.rooms_total or 0) else 'alarm' }}">
-    <dt>Rooms in spec</dt>
-    <dd>{{ summary.rooms_in_spec or 0 }} <small>of {{ summary.rooms_total or 0 }}</small></dd>
-  </div>
-  <div class="tile {{ 'alarm' if (summary.excursions_24h or 0) else 'clean' }}">
-    <dt>Excursion minutes, 24 h</dt>
-    <dd>{{ '{:,}'.format(summary.excursions_24h or 0) }}</dd>
+  <div class="tile">
+    <dt>Points reporting</dt>
+    <dd>{{ '{:,}'.format(summary.online_points or 0) }}</dd>
   </div>
   <div class="tile">
     <dt>Readings, 24 h</dt>
     <dd>{{ '{:,}'.format(summary.readings_24h or 0) }}</dd>
+  </div>
+  <div class="tile">
+    <dt>Newest reading</dt>
+    <dd>{% if summary.newest %}{{ summary.newest.strftime('%H:%M:%S') }}
+        {% else %}<span class="dim">none</span>{% endif %}</dd>
   </div>
 </dl>
 
@@ -38,31 +43,38 @@
         </tr>
       </thead>
       <tbody>
+        {# The reading is formatted from the parameter's OWN unit and
+           decimals, not from a list of keys this template knows about.
+           It used to say `if dp then Pa elif kwh_import then kWh`, which
+           meant a particle counter or a BTU meter would have shown an
+           em dash - the shared table silently knowing two products and
+           no others. #}
         {% for d in devices %}
-          {% set dp = d.points | selectattr('param', 'equalto', 'dp') | first %}
-          {% set kwh = d.points | selectattr('param', 'equalto', 'kwh_import') | first %}
+          {% set first = d.points | first %}
           <tr>
-            <td class="code">{{ d.code }}</td>
+            <td class="code"><a href="/devices/{{ d.code }}">{{ d.code }}</a></td>
             <td>{{ d.name }}</td>
             <td class="dim">{{ d.gateway }}</td>
             <td class="num dim">{{ d.unit_id }}</td>
             <td class="num">
-              {% if dp %}
-                {{ '%.0f'|format(dp.value) }} Pa
-              {% elif kwh %}
-                {{ '{:,.1f}'.format(kwh.value) }} kWh
+              {% if first %}
+                {{ '{:,.{}f}'.format(first.value, first.decimals) }}
+                <span class="dim">{{ first.unit }}</span>
+                {% if d.points | length > 1 %}
+                  <span class="dim">+{{ d.points | length - 1 }}</span>
+                {% endif %}
               {% else %}
                 &mdash;
               {% endif %}
             </td>
             <td>
-              {% if not d.online %}
-                <span class="pill offline">offline</span>
-              {% elif dp %}
-                {% set cls, label = classify_dp(dp.value) %}
-                <span class="pill {{ cls }}">{{ label }}</span>
+              {# Online or not is all the shared table can honestly say.
+                 "In spec" is a judgement about a pressure cascade and
+                 lives on /environment, where the limits are known. #}
+              {% if d.online %}
+                <span class="pill good">online</span>
               {% else %}
-                <span class="pill good">logging</span>
+                <span class="pill critical">silent</span>
               {% endif %}
             </td>
             <td class="num dim">

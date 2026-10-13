@@ -1,0 +1,18 @@
+{% extends "_base.html" %}
+{% block title %}Not found &mdash; Jetpace{% endblock %}
+{% block nav %}devices{% endblock %}
+
+{% block content %}
+<section>
+  <h2>No device called {{ code }}</h2>
+  <div class="card">
+    <p>
+      Either it was never commissioned, or it has been retired. A retired
+      device keeps its readings &mdash; it is marked with
+      <code>retired_at</code> rather than deleted, because deleting a
+      device with history would orphan every reading it took.
+    </p>
+    <p><a href="/devices">All devices</a></p>
+  </div>
+</section>
+{% endblock %}

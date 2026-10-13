@@ -1,0 +1,126 @@
+{% extends "_base.html" %}
+{% block title %}Energy &mdash; Jetpace{% endblock %}
+{% block nav %}energy{% endblock %}
+
+{% block content %}
+  <p class="lede">
+    Electrical energy. Consumption is the last reading of a period minus
+    the first &mdash; never the highest &mdash; and a figure the system
+    cannot defend is left blank with a status rather than guessed at.
+  </p>
+
+  <!-- ================= energy ================= -->
+  <section>
+    <h2>Energy
+      <span class="hint">daily consumption, last 7 days</span>
+    </h2>
+    <div class="card">
+      <div id="em-chart" class="chart"></div>
+      <div class="table-view tablewrap" id="em-table" hidden></div>
+      <div class="chart-foot">
+        <div class="legend" id="em-legend"></div>
+        <button class="toggle" type="button" data-target="em">Table view</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= consumption, with its statuses ================= -->
+  <section>
+    <h2>consumption()
+      <span class="hint">the billing function, over the last 7 days</span>
+    </h2>
+    <div class="card tablewrap">
+      <table>
+        <thead>
+          <tr><th>Device</th><th>Name</th><th class="num">Used</th>
+              <th>Status</th><th>Period</th></tr>
+        </thead>
+        <tbody>
+          {% for e in energy %}
+            <tr>
+              <td class="code">{{ e.code }}</td>
+              <td>{{ e.name }}</td>
+              <td class="num">
+                {% if e.used is not none %}{{ '{:,.1f}'.format(e.used) }} kWh
+                {% else %}&mdash;{% endif %}
+              </td>
+              <td>
+                {% if e.status == 'ok' %}<span class="pill good">ok</span>
+                {% elif e.status == 'partial_new_meter' %}<span class="pill good">partial &mdash; new meter</span>
+                {% elif e.status == 'counter_reset' %}<span class="pill serious">counter reset</span>
+                {% elif e.status == 'stale_open' %}<span class="pill warning">stale opening read</span>
+                {% elif e.status == 'not_a_counter' %}<span class="pill offline">not a counter</span>
+                {% else %}<span class="pill critical">{{ e.status }}</span>{% endif %}
+              </td>
+              <td class="dim">{{ e.period_start }} &rarr; {{ e.period_end }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="dim">No counter data yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="chart-foot">
+        A blank figure is never a zero. The status says why the system would
+        not report a number it could not defend.
+      </div>
+    </div>
+  </section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+ready(function () {
+  "use strict";
+
+  // baseOption, legendInto, escapeHtml, tableInto, cssVar, seriesColours
+  // and the table-view toggle all come from _base.html.
+  var SERIES = seriesColours();
+  var ink    = cssVar("--ink-2");
+  var muted  = cssVar("--muted");
+  var grid   = cssVar("--grid");
+  var axis   = cssVar("--axis");
+
+  // ---- energy ----------------------------------------------------------
+  fetch("/api/energy-daily?days=7").then(function (r) { return r.json(); })
+    .then(function (data) {
+      var el = document.getElementById("em-chart");
+      if (!el || !data.series.length) { return; }
+      var chart = echarts.init(el);
+      var opt = baseOption();
+      opt.xAxis.type = "category";
+      opt.xAxis.data = data.series[0].points.map(function (p) { return p[0]; });
+      opt.yAxis.name = "kWh";
+      opt.yAxis.nameTextStyle = { color: muted, fontSize: 11, align: "right" };
+      opt.tooltip.axisPointer = { type: "shadow" };
+      opt.series = data.series.map(function (s, i) {
+        return {
+          name: s.name,
+          type: "bar",
+          data: s.points.map(function (p) { return p[1]; }),
+          itemStyle: {
+            color: SERIES[i % SERIES.length],
+            // 4px rounded data-end, anchored to the baseline
+            borderRadius: [4, 4, 0, 0],
+            // 2px surface gap so adjacent bars never touch
+            borderColor: cssVar("--surface"),
+            borderWidth: 2
+          },
+          barGap: "10%"
+        };
+      });
+      chart.setOption(opt);
+      new ResizeObserver(function () { chart.resize(); }).observe(el);
+      legendInto("em-legend", data.series);
+
+      var head = ["Day"].concat(data.series.map(function (s) { return s.name; }));
+      tableInto("em-table", head,
+        opt.xAxis.data.map(function (day, idx) {
+          return [day].concat(data.series.map(function (s) {
+            return s.points[idx] ? s.points[idx][1].toFixed(1) + " kWh" : "—";
+          }));
+        }));
+    });
+
+});
+</script>
+{% endblock %}

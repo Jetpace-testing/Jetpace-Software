@@ -56,7 +56,7 @@ Modbus → poller → MQTT → ingest → TimescaleDB → dashboard, verified li
 | `jetpace-energy` | not built | §3 |
 | `jetpace-environment` | not built | §3 |
 
-315 tests, all passing. 243,648 seeded readings. Schema version 4.
+354 tests, all passing. 243,648 seeded readings. Schema version 4.
 
 **Nothing can ship to a customer site until the updater works** (§12). That is
 not a preference — a deployed install with no way to receive a fix is a liability.
@@ -419,7 +419,7 @@ Honest register of where the repo and the specification disagree.
 
 | # | Issue | Why it matters |
 |---|---|---|
-| 1 | **Product logic sits in core.** `web/queries.py` hardcodes `p.key = 'dp'`, `rooms_in_spec`, `excursions_24h` and `p.key = 'kwh_import'` | Both products' domain rules are inside the shared package. §3 puts these in `energy` and `environment`. Acceptable as a prototype expedient; must be split before either product ships |
+| 1 | ~~Product logic in core~~ — **fixed.** The shell (overview, device list, device page, trend API) names no parameter key; `dp` and `kwh_import` appear only under `/environment` and `/energy` and in the queries those call | Enforced by tests asserting the shell's SQL contains no literal key. The remaining step is §3 proper: `packages/energy` and `packages/environment` as workspace members, with environment pinning a validated core version |
 | 2 | **No declared `Sink` Protocol.** `sinks.py` says "two implementations" and there are three; the shape is duck-typed and unenforced | The seam is the most load-bearing boundary in the system and nothing checks it. A `typing.Protocol` plus a conformance test would |
 | 3 | Device list in `config/prototype.toml`, not the database | §6. Needs a dry-run diff when it moves |
 | 4 | Mosquitto is not a Windows service | Dies on reboot; the same treatment as PostgreSQL would fix it |

@@ -223,3 +223,159 @@ footer.foot { margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--h
 .small .mini { height: 92px; width: 100%; }
 .small .thin { height: 92px; display: flex; align-items: center;
                justify-content: center; color: var(--muted); font-size: 12px; }
+
+/* ===========================================================================
+ * The shell: navigation, breadcrumbs, controls, the device pages.
+ *
+ * Added when the single demonstration page became an application. No new
+ * colours - everything here uses the tokens already defined above, so
+ * light and dark mode need no second thought and the palette keeps one
+ * home.
+ * ======================================================================== */
+
+.top h1 a { color: inherit; text-decoration: none; }
+
+nav.nav {
+  display: flex;
+  gap: 2px;
+  margin: 0 0 22px;
+  border-bottom: 1px solid var(--hairline);
+}
+nav.nav a {
+  padding: 8px 14px;
+  font-size: 13px;
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+nav.nav a:hover { color: var(--ink); }
+nav.nav a.current {
+  color: var(--ink);
+  border-bottom-color: var(--series-1);
+}
+nav.nav a:focus-visible {
+  outline: 2px solid var(--series-1);
+  outline-offset: -2px;
+}
+
+h2 .back { color: var(--muted); text-decoration: none; font-weight: inherit; }
+h2 .back:hover { color: var(--ink); }
+h2 .sep { color: var(--axis); margin: 0 6px; font-weight: 400; }
+
+/* --- the chip rows above a chart ---------------------------------------- */
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 0 14px;
+}
+.controls .group { display: flex; gap: 2px; flex-wrap: wrap; }
+
+button.chip {
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 11px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  cursor: pointer;
+}
+button.chip:hover { color: var(--ink); border-color: var(--axis); }
+button.chip.current {
+  color: var(--ink);
+  border-color: var(--series-1);
+  /* A 1px tint rather than a filled button: the chart is the thing being
+     looked at, and a loud control steals from it. */
+  box-shadow: inset 0 0 0 1px var(--series-1);
+}
+button.chip:focus-visible {
+  outline: 2px solid var(--series-1);
+  outline-offset: 1px;
+}
+
+/* --- device identity ---------------------------------------------------- */
+
+.identity dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 16px 24px;
+  margin: 0;
+}
+.identity dt {
+  font-size: 10.5px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+.identity dd { margin: 0; font-size: 14px; }
+.identity .foot-note {
+  margin: 18px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline);
+  font-size: 12.5px;
+  color: var(--muted);
+  max-width: 70ch;
+}
+
+/* --- a tile's own footer ------------------------------------------------ */
+
+.tile-foot {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* --- the device table --------------------------------------------------- */
+
+a.code {
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  text-decoration: none;
+  border-bottom: 1px solid var(--axis);
+}
+a.code:hover { border-bottom-color: var(--series-1); }
+
+/* --- status pills -------------------------------------------------------
+ * Every pill carries its word. Colour is the second encoding, never the
+ * only one - which matters for the eight percent of men who would
+ * otherwise see two identical grey dots.
+ * --------------------------------------------------------------------- */
+
+.pill {
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .03em;
+  padding: 2px 7px;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+.pill.good     { color: var(--good-ink);  background: color-mix(in srgb, var(--good) 14%, transparent); }
+.pill.warning  { color: var(--warning);   background: color-mix(in srgb, var(--warning) 18%, transparent); }
+.pill.serious  { color: var(--serious);   background: color-mix(in srgb, var(--serious) 18%, transparent); }
+.pill.critical { color: var(--critical);  background: color-mix(in srgb, var(--critical) 14%, transparent); }
+
+/* --- the page footer ---------------------------------------------------- */
+
+footer.foot {
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin: 40px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--hairline);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+@media (max-width: 640px) {
+  nav.nav { overflow-x: auto; }
+  .controls { gap: 10px; }
+}

@@ -1,0 +1,30 @@
+{# One tile per parameter this device actually reports. Driven by the
+   readings rather than by the model, so a point that has never answered
+   is absent instead of showing a confident blank. #}
+
+<dl class="tiles">
+  {% for p in points %}
+    <div class="tile{{ ' alarm' if not p.fresh }}">
+      <dt>{{ p.label }}</dt>
+      <dd>
+        {{ '{:,.{}f}'.format(p.value, p.decimals) }}
+        <small>{{ p.unit }}</small>
+      </dd>
+      <p class="tile-foot">
+        {% if not p.fresh %}
+          <span class="pill critical">silent</span> {{ p.age_s }} s ago
+        {% elif p.quality == 1 %}
+          {# A substituted sample is not a measurement. Saying so is a
+             requirement under §11, not a courtesy. #}
+          <span class="pill warning">substituted</span>
+        {% elif p.quality == 2 %}
+          <span class="pill serious">suspect</span>
+        {% else %}
+          <span class="dim">{{ p.age_s }} s ago &middot; {{ p.aggregation }}</span>
+        {% endif %}
+      </p>
+    </div>
+  {% else %}
+    <p class="dim">This device has never reported a reading.</p>
+  {% endfor %}
+</dl>

@@ -1,0 +1,54 @@
+{# Polled, so it is a partial. The whole table refreshes rather than each
+   row, because at 400 devices one request beats four hundred. #}
+
+<div class="card tablewrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Device</th>
+        <th>Name</th>
+        <th>Gateway</th>
+        <th class="num">Unit</th>
+        <th>Model</th>
+        <th class="num">Points</th>
+        <th>State</th>
+        <th class="num">Age</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in devices %}
+      <tr>
+        <td><a class="code" href="/devices/{{ d.code }}">{{ d.code }}</a></td>
+        <td>{{ d.name }}</td>
+        <td class="dim">{{ d.gateway }}</td>
+        <td class="num">{{ d.unit_id }}</td>
+        <td class="dim">{{ d.model }}</td>
+        <td class="num">{{ d.points }}</td>
+        <td>
+          {# A status is never colour alone: every pill carries its word. #}
+          {% if d.online %}
+            <span class="pill good">online</span>
+          {% else %}
+            <span class="pill critical">silent</span>
+          {% endif %}
+        </td>
+        <td class="num">
+          {% if d.age_s is none %}
+            <span class="dim">never</span>
+          {% else %}
+            {{ d.age_s }} s
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="8" class="dim">
+          No devices are commissioned. The device list comes from
+          config/prototype.toml and is written to the database by
+          scripts/seed_prototype.py.
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

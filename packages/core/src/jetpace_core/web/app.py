@@ -28,25 +28,51 @@ from . import queries
 
 HERE = Path(__file__).resolve().parent
 
-# Pressure thresholds for the status pill. A cleanroom cascade is healthy
-# positive; approaching zero is worth a warning before it reverses.
-DP_WARN_BELOW = 5.0
+# classify_dp lived here, judging a pressure value as "in spec", "low" or
+# "reversed", and was registered as a template global so any page could
+# call it. The shared live table did, which is how the overview came to
+# have an opinion about cleanrooms.
+#
+# It is gone rather than kept unused: a product-specific helper available
+# to every template is an invitation to re-couple the shell to one
+# product, and the next person to need it will not know it was supposed to
+# be out of bounds. When /environment needs server-rendered status pills
+# it comes back there, with the limits that belong to it.
+
+# The time ranges offered on a trend. Labels are what a person says out
+# loud; the hours are what the query gets.
+RANGES: tuple[tuple[str, float], ...] = (
+    ("1 h", 1),
+    ("6 h", 6),
+    ("24 h", 24),
+    ("3 d", 72),
+    ("7 d", 168),
+    ("30 d", 720),
+)
+
+# A window from a query string is not to be trusted. These are the bounds.
+MIN_HOURS = 0.1
+MAX_HOURS = 24 * 400
 
 
-def classify_dp(value: float) -> tuple[str, str]:
-    """(status, label). Status colours are reserved and always carry a label."""
-    if value <= 0:
-        return "critical", "reversed"
-    if value < DP_WARN_BELOW:
-        return "warning", "low"
-    return "good", "in spec"
+def window_label(hours: float) -> str:
+    """How the chart footer says the window, in words rather than hours."""
+    for label, h in RANGES:
+        if abs(h - hours) < 1e-9:
+            return f"last {label}"
+    if hours < 1:
+        return f"last {int(hours * 60)} min"
+    if hours < 48:
+        return f"last {hours:g} h"
+    return f"last {hours / 24:g} days"
+
+
 
 
 def create_app(dsn: str) -> FastAPI:
     app = FastAPI(title="Jetpace", docs_url="/api/docs")
     app.mount("/static", StaticFiles(directory=HERE / "static"), name="static")
     templates = Jinja2Templates(directory=HERE / "templates")
-    templates.env.globals["classify_dp"] = classify_dp
 
     def rows_for_live(conn):
         """Group the flat live query into one entry per device."""
@@ -67,11 +93,43 @@ def create_app(dsn: str) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def index(request: Request):
+        """
+        The overview, and only what is true of every product.
+
+        It used to carry the pressure panels and the energy panels on the
+        same screen, which is a page that is wrong for every customer -
+        each of them has bought one product and is being shown another.
+        Those moved to /environment and /energy.
+        """
         with queries.connect(dsn) as conn:
             return templates.TemplateResponse(request, "index.html", {
                 "summary": queries.summary(conn),
                 "devices": rows_for_live(conn),
+            })
+
+    # --- the product views ----------------------------------------------
+    #
+    # Separate routes, separate templates, and the parameter keys they are
+    # about ('dp', 'kwh_import') appear only here and in the queries these
+    # call. The shell above mentions neither.
+    #
+    # architecture.md §3 has these becoming packages/energy and
+    # packages/environment, with environment pinning a validated core
+    # version while energy tracks head. This is the seam that makes that a
+    # file move rather than a redesign.
+
+    @app.get("/environment", response_class=HTMLResponse)
+    def environment(request: Request):
+        with queries.connect(dsn) as conn:
+            return templates.TemplateResponse(request, "environment.html", {
+                "summary": queries.environment_summary(conn),
                 "excursions": queries.excursions(conn, days=7),
+            })
+
+    @app.get("/energy", response_class=HTMLResponse)
+    def energy(request: Request):
+        with queries.connect(dsn) as conn:
+            return templates.TemplateResponse(request, "energy.html", {
                 "energy": queries.energy_period(conn, days=7),
             })
 
@@ -83,6 +141,78 @@ def create_app(dsn: str) -> FastAPI:
                 "summary": queries.summary(conn),
                 "devices": rows_for_live(conn),
             })
+
+    # --- the device list and one device --------------------------------
+
+    @app.get("/devices", response_class=HTMLResponse)
+    def devices_page(request: Request):
+        with queries.connect(dsn) as conn:
+            return templates.TemplateResponse(request, "devices.html", {
+                "devices": queries.devices(conn),
+            })
+
+    @app.get("/partials/devices", response_class=HTMLResponse)
+    def partial_devices(request: Request):
+        with queries.connect(dsn) as conn:
+            return templates.TemplateResponse(request, "_devices.html", {
+                "devices": queries.devices(conn),
+            })
+
+    @app.get("/devices/{code}", response_class=HTMLResponse)
+    def device_page(request: Request, code: str):
+        with queries.connect(dsn) as conn:
+            found = queries.device(conn, code)
+            if found is None:
+                # 404 as a page, not as JSON: this URL is reached by
+                # clicking or by a stale bookmark, and a person is reading.
+                return templates.TemplateResponse(
+                    request, "not_found.html", {"code": code},
+                    status_code=404)
+            return templates.TemplateResponse(request, "device.html", {
+                "device": found,
+                "points": queries.device_points(conn, code),
+                "ranges": RANGES,
+            })
+
+    @app.get("/partials/device-points/{code}", response_class=HTMLResponse)
+    def partial_device_points(request: Request, code: str):
+        with queries.connect(dsn) as conn:
+            return templates.TemplateResponse(request, "_device_points.html", {
+                "points": queries.device_points(conn, code),
+            })
+
+    @app.get("/api/trend")
+    def api_trend(device: str, param: str, hours: float = 24.0):
+        """
+        One device, one parameter, any window.
+
+        The window is clamped rather than trusted. hours=100000 would ask
+        the database to bucket the entire history into one chart, and the
+        only thing that achieves is a timeout on a site - from a URL
+        anybody can type.
+
+        Points are arrays rather than objects: [ms, avg, min, max,
+        samples]. Thirty days is a few hundred rows, and five keys repeated
+        a few hundred times is most of the response body.
+        """
+        hours = max(MIN_HOURS, min(float(hours), MAX_HOURS))
+        with queries.connect(dsn) as conn:
+            rows, width, source = queries.trend(conn, device, param, hours)
+
+        points = [
+            [int(r["bucket"].timestamp() * 1000),
+             round(float(r["avg"]), 4),
+             round(float(r["min"]), 4),
+             round(float(r["max"]), 4),
+             int(r["samples"] or 0)]
+            for r in rows
+        ]
+        return JSONResponse({
+            "device": device, "param": param, "hours": hours,
+            "window": window_label(hours),
+            "width": width, "source": source,
+            "rows": len(points), "points": points,
+        })
 
     @app.get("/api/dp-trend")
     def api_dp_trend(hours: int = 24):

@@ -1,0 +1,264 @@
+{% extends "_base.html" %}
+{% block title %}{{ device.code }} &mdash; Jetpace{% endblock %}
+{% block nav %}devices{% endblock %}
+
+{% block content %}
+<section>
+  <h2>
+    <a class="back" href="/devices">Devices</a>
+    <span class="sep">/</span>{{ device.code }}
+    <span class="hint">{{ device.name }}</span>
+  </h2>
+
+  <div class="card identity">
+    <dl>
+      <div><dt>Model</dt>
+           <dd>{{ device.model }}
+               <span class="dim">rev {{ device.model_revision }}</span></dd></div>
+      <div><dt>Vendor</dt><dd>{{ device.vendor }}</dd></div>
+      <div><dt>Gateway</dt>
+           <dd>{{ device.gateway }}
+               <span class="dim">{{ device.host }}:{{ device.port }}</span></dd></div>
+      <div><dt>Unit</dt><dd>{{ device.unit_id }}</dd></div>
+      <div><dt>Site</dt><dd>{{ device.site }}</dd></div>
+      <div><dt>Commissioned</dt>
+           <dd>{% if device.commissioned_at %}
+                 {{ device.commissioned_at.strftime('%d %b %Y') }}
+               {% else %}<span class="dim">not recorded</span>{% endif %}</dd></div>
+    </dl>
+    {% if device.datasheet_ref %}
+      <p class="foot-note">
+        Register map pinned to <strong>{{ device.datasheet_ref }}</strong>.
+        A datasheet revision that moves a register is a new model row, never
+        an edit, so readings taken before it stay decodable.
+      </p>
+    {% endif %}
+  </div>
+</section>
+
+<!-- ================= current values ================= -->
+<section>
+  <h2>Now
+    <span class="hint">refreshes by itself</span>
+  </h2>
+  <div id="points" hx-get="/partials/device-points/{{ device.code }}"
+       hx-trigger="every 5s" hx-swap="innerHTML">
+    {% include "_device_points.html" %}
+  </div>
+</section>
+
+<!-- ================= trend ================= -->
+<section>
+  <h2>Trend
+    <span class="hint" id="trend-hint">&nbsp;</span>
+  </h2>
+
+  <div class="card">
+    <div class="controls">
+      <div class="group" role="group" aria-label="Parameter">
+        {% for p in points %}
+          <button class="chip{{ ' current' if loop.first }}" type="button"
+                  data-param="{{ p.key }}"
+                  data-unit="{{ p.unit }}"
+                  data-decimals="{{ p.decimals }}">{{ p.label }}</button>
+        {% endfor %}
+      </div>
+      <div class="group" role="group" aria-label="Time range">
+        {% for label, hours in ranges %}
+          <button class="chip{{ ' current' if hours == 24 }}" type="button"
+                  data-hours="{{ hours }}">{{ label }}</button>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="chart" id="trend-chart"></div>
+
+    <div class="chart-foot">
+      <span id="trend-source">&nbsp;</span>
+      <button class="toggle" type="button" id="trend-table-toggle">Table view</button>
+    </div>
+    <div class="table-view tablewrap" id="trend-table" hidden></div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+ready(function () {
+  var CODE = {{ device.code | tojson }};
+  var el = document.getElementById("trend-chart");
+  if (!el) return;
+  if (!window.echarts) {
+    // Loud, not silent. A missing chart library is a broken install -
+    // the vendored file did not ship - and the one thing that must not
+    // happen is an empty panel that looks like "no data".
+    document.getElementById("trend-source").textContent =
+      "the charting library did not load; /static/vendor/echarts.min.js "
+      + "is missing from this install";
+    return;
+  }
+
+  var chart = registerChart(echarts.init(el));
+  var state = { param: null, unit: "", decimals: 1, hours: 24, rows: [] };
+
+  var first = document.querySelector("[data-param]");
+  if (first) {
+    state.param = first.dataset.param;
+    state.unit = first.dataset.unit;
+    state.decimals = parseInt(first.dataset.decimals, 10);
+  }
+
+  function fmt(v) {
+    return v === null || v === undefined
+      ? "—" : Number(v).toFixed(state.decimals);
+  }
+
+  function draw(payload) {
+    var rows = payload.points || [];
+    state.rows = rows;
+    var c = seriesColours();
+    var hue = c[0];
+
+    // An empty window is a normal answer - a device commissioned this
+    // morning has no 30-day history, and a poller that was stopped has no
+    // last hour. Drawing empty axes and saying nothing invites the reader
+    // to decide for themselves whether the chart is broken.
+    if (!rows.length) {
+      chart.clear();
+      chart.setOption({
+        title: {
+          text: "No readings in this window",
+          subtext: "The window is " + payload.window
+                 + ". Try a longer one, or check the device is reporting.",
+          left: "center", top: "middle",
+          textStyle: { color: cssVar("--muted"), fontSize: 14,
+                       fontWeight: "normal" },
+          subtextStyle: { color: cssVar("--muted"), fontSize: 12 }
+        }
+      }, true);
+      document.getElementById("trend-source").textContent =
+        "0 points · " + payload.window;
+      document.getElementById("trend-hint").textContent =
+        state.param + ", " + payload.window;
+      renderTable();
+      return;
+    }
+
+    // The range the bucket actually covered, as a band under the average.
+    // An average alone hides the excursion that matters, which for a
+    // pressure cascade is the only reason to look at the chart.
+    var band_lo = rows.map(function (r) { return [r[0], r[2]]; });
+    var band_hi = rows.map(function (r) { return [r[0], r[3] - r[2]]; });
+    var avg     = rows.map(function (r) { return [r[0], r[1]]; });
+
+    var opt = chartBase();
+    opt.yAxis.name = state.unit;
+    opt.yAxis.nameTextStyle = { color: cssVar("--muted"), fontSize: 11,
+                                align: "left" };
+    opt.yAxis.nameLocation = "end";
+    opt.tooltip.formatter = function (ps) {
+      if (!ps.length) return "";
+      var i = ps[0].dataIndex, r = rows[i];
+      var when = new Date(r[0]).toLocaleString();
+      return "<div style='font-size:11px;opacity:.7'>" + when + "</div>"
+        + "<strong>" + fmt(r[1]) + " " + state.unit + "</strong>"
+        + "<div style='font-size:11px;opacity:.7'>range " + fmt(r[2])
+        + " to " + fmt(r[3]) + " &middot; " + r[4] + " samples</div>";
+    };
+    opt.series = [
+      { name: "low", type: "line", data: band_lo, stack: "band",
+        lineStyle: { opacity: 0 }, symbol: "none",
+        areaStyle: { opacity: 0 }, silent: true },
+      { name: "range", type: "line", data: band_hi, stack: "band",
+        lineStyle: { opacity: 0 }, symbol: "none",
+        areaStyle: { color: hue, opacity: 0.16 }, silent: true },
+      { name: "average", type: "line", data: avg,
+        lineStyle: { color: hue, width: 2 }, symbol: "none",
+        emphasis: { disabled: true } }
+    ];
+
+    // Zero matters for a pressure cascade and nowhere else, so the line is
+    // drawn only when the data actually crosses it or comes near.
+    var lows = rows.map(function (r) { return r[2]; });
+    if (lows.length && Math.min.apply(null, lows) <= 2) {
+      opt.series[2].markLine = {
+        silent: true, symbol: "none",
+        label: { formatter: "0", color: cssVar("--muted"), fontSize: 10 },
+        lineStyle: { color: cssVar("--critical"), type: "dashed", width: 1 },
+        data: [{ yAxis: 0 }]
+      };
+    }
+
+    chart.setOption(opt, true);
+
+    document.getElementById("trend-source").textContent =
+      payload.rows + " points · " + payload.width + " buckets · from "
+      + payload.source;
+    document.getElementById("trend-hint").textContent =
+      state.param + ", " + payload.window;
+
+    renderTable();
+  }
+
+  function renderTable() {
+    var host = document.getElementById("trend-table");
+    if (host.hidden) return;
+    var out = ["<table><thead><tr><th>Time</th><th class='num'>Average</th>",
+               "<th class='num'>Min</th><th class='num'>Max</th>",
+               "<th class='num'>Samples</th></tr></thead><tbody>"];
+    state.rows.slice().reverse().forEach(function (r) {
+      out.push("<tr><td>" + new Date(r[0]).toLocaleString() + "</td>"
+        + "<td class='num'>" + fmt(r[1]) + "</td>"
+        + "<td class='num'>" + fmt(r[2]) + "</td>"
+        + "<td class='num'>" + fmt(r[3]) + "</td>"
+        + "<td class='num'>" + r[4] + "</td></tr>");
+    });
+    out.push("</tbody></table>");
+    host.innerHTML = out.join("");
+  }
+
+  function load() {
+    if (!state.param) return;
+    var url = "/api/trend?device=" + encodeURIComponent(CODE)
+            + "&param=" + encodeURIComponent(state.param)
+            + "&hours=" + state.hours;
+    fetch(url).then(function (r) { return r.json(); }).then(draw)
+      .catch(function (e) {
+        document.getElementById("trend-source").textContent =
+          "could not load the trend: " + e;
+      });
+  }
+
+  function wire(attr, apply) {
+    document.querySelectorAll("[" + attr + "]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        b.parentElement.querySelectorAll(".chip")
+          .forEach(function (o) { o.classList.remove("current"); });
+        b.classList.add("current");
+        apply(b);
+        load();
+      });
+    });
+  }
+  wire("data-param", function (b) {
+    state.param = b.dataset.param;
+    state.unit = b.dataset.unit;
+    state.decimals = parseInt(b.dataset.decimals, 10);
+  });
+  wire("data-hours", function (b) {
+    state.hours = parseFloat(b.dataset.hours);
+  });
+
+  document.getElementById("trend-table-toggle")
+    .addEventListener("click", function () {
+      var host = document.getElementById("trend-table");
+      host.hidden = !host.hidden;
+      this.textContent = host.hidden ? "Table view" : "Chart view";
+      document.getElementById("trend-chart").hidden = !host.hidden;
+      renderTable();
+    });
+
+  load();
+});
+</script>
+{% endblock %}

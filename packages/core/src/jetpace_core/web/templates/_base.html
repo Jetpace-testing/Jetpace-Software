@@ -1,0 +1,246 @@
+{#
+  The shell every page sits in.
+
+  Before this there was one page, so the head, the header and the script
+  bootstrap were written once and that was fine. A second page would have
+  copied them, a third would have copied them again, and the moment one
+  copy drifted - a stylesheet link, the theme toggle, the chart colour
+  helper - two pages would look like different products.
+
+  Pages override `title`, `nav` (which item is current), `content` and
+  `scripts`.
+#}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Jetpace{% endblock %}</title>
+<link rel="stylesheet" href="/static/app.css">
+{# Vendored, not from a CDN: a plant network often has no route out, and
+   that is also why there is no build step. #}
+<script src="/static/vendor/htmx.min.js" defer></script>
+<script src="/static/vendor/echarts.min.js" defer></script>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <h1><a href="/">Jetpace</a></h1>
+    <span class="site">{{ site_name or 'Prototype site' }}</span>
+    <span class="clock" id="clock"></span>
+  </header>
+
+  {# Only what exists. Environment and Energy arrive when the overview's
+     product-specific panels are split into their own views - adding the
+     links before the pages would mean shipping two 404s in the
+     navigation, which is worse than a short nav. #}
+  {# The block has to be DEFINED here for a child to override it, and
+     wherever it is defined it renders. Inside a comment, so reading it
+     with self.nav() below costs nothing visible - and the comment is
+     worth having anyway when someone views source to ask which page they
+     are on. #}
+  <!-- section: {% block nav %}{% endblock %} -->
+  <nav class="nav" aria-label="Sections">
+    {% set here = self.nav() | trim %}
+    <a href="/"        class="{{ 'current' if here == 'overview' }}">Overview</a>
+    <a href="/devices" class="{{ 'current' if here == 'devices' }}">Devices</a>
+    {# Both products appear while one install serves both. A customer who
+       has bought one should not have a tab for the other to ignore - §3
+       settles that by shipping two applications over a shared core, and
+       this list then follows which one is installed. #}
+    <a href="/environment" class="{{ 'current' if here == 'environment' }}">Environment</a>
+    <a href="/energy"      class="{{ 'current' if here == 'energy' }}">Energy</a>
+  </nav>
+
+  {% block content %}{% endblock %}
+
+  <footer class="foot">
+    <span>{{ version or '' }}</span>
+    <span>Readings are stored in UTC and shown in {{ timezone or 'Asia/Kolkata' }}.</span>
+  </footer>
+
+</div>
+
+<script>
+// The clock, and the one helper every chart needs. Colours are read from
+// CSS at draw time rather than written into the JavaScript, so light and
+// dark mode use the same code and the palette has exactly one home.
+(function () {
+  function tick() {
+    var el = document.getElementById("clock");
+    if (el) el.textContent = new Date().toLocaleTimeString();
+  }
+  tick();
+  setInterval(tick, 1000);
+})();
+
+function cssVar(name) {
+  return getComputedStyle(document.documentElement)
+    .getPropertyValue(name).trim();
+}
+
+// Shared chart furniture: grid, axes, tooltip. Every chart on every page
+// starts from this, so they read as one product rather than as four
+// people's charts.
+function chartBase() {
+  var muted = cssVar("--muted");
+  var grid  = cssVar("--grid");
+  var axis  = cssVar("--axis");
+  return {
+    animation: false,
+    grid: { left: 52, right: 16, top: 16, bottom: 28, containLabel: false },
+    tooltip: {
+      trigger: "axis",
+      axisPointer: { type: "cross", crossStyle: { color: axis },
+                     lineStyle: { color: axis } },
+      backgroundColor: cssVar("--surface"),
+      borderColor: cssVar("--hairline"),
+      textStyle: { color: cssVar("--ink"), fontSize: 12 }
+    },
+    xAxis: {
+      type: "time",
+      axisLine: { lineStyle: { color: axis } },
+      axisTick: { show: false },
+      axisLabel: { color: muted, fontSize: 11 },
+      splitLine: { show: false }
+    },
+    yAxis: {
+      type: "value",
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { color: muted, fontSize: 11 },
+      splitLine: { lineStyle: { color: grid } }
+    }
+  };
+}
+
+function seriesColours() {
+  return [cssVar("--series-1"), cssVar("--series-2"), cssVar("--series-3")];
+}
+
+// The furniture every chart page needs. These lived in the overview page
+// when it was the only page; when it became three, keeping them there
+// would have meant three copies, and three copies drift.
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;",
+             '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+
+// Recessive axes and grid: hairline splitlines, muted ticks, and no axis
+// line on the value side - the gridlines already imply it. The data is
+// what should be looked at.
+function baseOption() {
+  var muted = cssVar("--muted");
+  var grid  = cssVar("--grid");
+  var axis  = cssVar("--axis");
+  return {
+    animation: false,
+    textStyle: { fontFamily: getComputedStyle(document.body).fontFamily },
+    grid: { left: 52, right: 74, top: 18, bottom: 30 },
+    tooltip: {
+      trigger: "axis",
+      axisPointer: { type: "cross", label: { show: false },
+                     crossStyle: { color: axis }, lineStyle: { color: axis } },
+      backgroundColor: cssVar("--surface"),
+      borderColor: cssVar("--hairline"),
+      textStyle: { color: cssVar("--ink"), fontSize: 12 }
+    },
+    xAxis: {
+      axisLine: { lineStyle: { color: axis } },
+      axisTick: { show: false },
+      axisLabel: { color: muted, fontSize: 11 },
+      splitLine: { show: false }
+    },
+    yAxis: {
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { color: muted, fontSize: 11 },
+      splitLine: { lineStyle: { color: grid, width: 1 } }
+    }
+  };
+}
+
+// A legend is present whenever there are two or more series, so identity
+// is never carried by colour alone.
+function legendInto(id, series) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  var colours = seriesColours();
+  el.innerHTML = series.map(function (s, i) {
+    return '<span><i style="background:' + colours[i % colours.length] +
+           '"></i>' + escapeHtml(s.name) + ' <span class="dim">' +
+           escapeHtml(s.code) + '</span></span>';
+  }).join("");
+}
+
+function tableInto(id, head, rows) {
+  var el = document.getElementById(id);
+  if (!el) return;
+  el.innerHTML =
+    "<table><thead><tr>" +
+    head.map(function (h, i) {
+      return "<th" + (i ? ' class="num"' : "") + ">" + escapeHtml(h) + "</th>";
+    }).join("") +
+    "</tr></thead><tbody>" +
+    rows.map(function (r) {
+      return "<tr>" + r.map(function (c, i) {
+        return "<td" + (i ? ' class="num"' : "") + ">" + escapeHtml(c) + "</td>";
+      }).join("") + "</tr>";
+    }).join("") +
+    "</tbody></table>";
+}
+
+// Every chart offers its numbers as a table. Not decoration: a chart
+// cannot be read by a screen reader, copied into a report, or checked
+// against a meter by hand, and somebody eventually needs all three.
+document.addEventListener("click", function (ev) {
+  var btn = ev.target.closest("button.toggle");
+  if (!btn) return;
+  var key = btn.dataset.target;
+  var chart = document.getElementById(key + "-chart");
+  var table = document.getElementById(key + "-table");
+  if (!chart || !table) return;
+  var showTable = table.hidden;
+  table.hidden = !showTable;
+  chart.style.display = showTable ? "none" : "";
+  btn.textContent = showTable ? "Chart view" : "Table view";
+});
+
+// Charts do not resize themselves.
+window.addEventListener("resize", function () {
+  (window.__charts || []).forEach(function (c) { c.resize(); });
+});
+function registerChart(c) {
+  (window.__charts = window.__charts || []).push(c);
+  return c;
+}
+
+// RUN PAGE CODE THROUGH THIS, NOT DIRECTLY.
+//
+// htmx and ECharts are loaded with `defer`, so they are not available
+// while the document is still being parsed - and an inline script at the
+// end of <body> runs during parsing, before either. A page that called
+// echarts.init() directly got `undefined` and, because it guarded with
+// `if (!window.echarts) return;`, drew nothing and said nothing: a blank
+// panel with no error anywhere.
+//
+// Deferred scripts run before DOMContentLoaded fires, so waiting for it is
+// enough. The overview page only ever worked because it happened to init
+// its charts inside a fetch callback, which is an accident rather than a
+// decision.
+function ready(fn) {
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", fn);
+  } else {
+    fn();
+  }
+}
+</script>
+
+{% block scripts %}{% endblock %}
+</body>
+</html>

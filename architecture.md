@@ -332,14 +332,50 @@ drop one in the same release that stops using it.
 |---|---|---|---|
 | PostgreSQL + TimescaleDB | 5433 | Windows service `jetpace-postgres` | **yes** |
 | Mosquitto | 1887 | **Windows service** `jetpace-mosquitto` | **yes** |
-| Device simulator | 5020 | foreground | no (dev only) |
-| Poller | — | foreground | no |
-| Ingest | — | foreground | no |
-| Dashboard | 1885 | foreground | no |
+| Device simulator | 5020 | supervisor child | **yes** (dev only) |
+| Poller | — | supervisor child | **yes** |
+| Ingest | — | supervisor child | **yes** |
+| Dashboard, administrative | 18850 (dev) / 1885 | supervisor child | **yes** |
+| Dashboard, per product | base + 1, + 2 … | supervisor child | **yes** |
 
 **No port is a default.** 1883, 1884 and 1885 were all occupied on one
 development laptop — Titan EMS owns 1883 — and a customer may already run
 PostgreSQL on 5432. Ports are settings, not constants.
+
+### One dashboard per product
+
+`jetpace web` serves one set of products, chosen with `--products` or
+`--shell-only`, so a site runs several instances from the one installation:
+
+| Instance | Products | Binds | For |
+|---|---|---|---|
+| `web` | all enabled | `127.0.0.1` | whoever looks after the system |
+| `web-<slug>` | that one | `--product-host`, default `127.0.0.1` | the people who use that product |
+
+Every instance carries the shell, because the device list is not an
+administrative screen — a customer who bought one product still needs to see
+their own devices. The administrative instance is therefore not a cut-down one;
+it is the *wider* one, and what keeps a customer out of it is the interface it
+binds to.
+
+**A separate port is a separate URL, not a separate permission.** Whoever can
+reach the energy dashboard can type the administrative port, and nothing in this
+software authenticates anybody — §10 is unbuilt. Of this arrangement only
+`--host` is actually enforced, and by the operating system rather than by us: a
+dashboard on `127.0.0.1` cannot be reached from another machine at all. That is
+a real boundary and it is the only one here.
+
+So for a customer who has bought one product, the stronger answer is not a port
+but `config/products.toml` naming that product: the other product's routes then
+do not exist, and there is nothing to find by guessing a URL. Separate ports
+earn their keep at a site that runs **both** products and wants the facilities
+team and the energy manager on separate URLs.
+
+Ports for the product instances are derived from the base port unless pinned
+with `--product-port <slug>=<port>`. Derivation is order-dependent and can land
+on an occupied port — on the development laptop a base of 1885 derives 1886 and
+1887, which are Meril RTD and our own broker — so `register_supervisor_service.py`
+tries to bind each one and says so when it cannot.
 
 All three long-lived pieces are services. `jetpace-supervisor` depends on
 `jetpace-postgres`, so Windows starts the database first, and `sc failure`
@@ -509,6 +545,8 @@ Honest register of where the repo and the specification disagree.
 | 12 | **Environment does not pin a validated core version**, so an energy change does reach a cleanroom install | §2 has the three routes to fixing it and what each costs. Not needed until there is a qualified customer install; much cheaper now the packages exist. The claim has been removed from §2 rather than left standing unqualified |
 | 13 | **`consumption()` is an energy function in core's schema, permanently.** `migrations/0002` defines it and `0003`/`0004` rewrite it | Migrations are numbered, forward-only and already applied at every install, so they cannot move or be renumbered. Core's *Python* never calls it, which is what the boundary test checks. Per-product migration chains are the real fix and are only mandatory once products ship separately — see debt #12 |
 | 14 | **One frozen bundle carries both products**; which one a site serves is `config/products.toml` | Deliberate: it keeps `REPLACEABLE`, the NSIS file lists and the one-version-per-release-zip assumption untouched, which matters because the updater must work before anything ships. The cost is that an environment-only customer has the energy code on disk, unreachable but present — which a validated install may eventually object to |
+| 15 | **`/healthz` asserts a 24-hour reading count, not freshness**, so it answers `ok:true` for a full day after data stops | Found the hard way on 13 October: a mis-registered service dropped the simulator, readings stopped at 16:55, and the health gate stayed green with 67k readings still inside the window. This is the supervisor's **release gate** — a release that starts cleanly and silently stops logging passes it. It should compare `newest` against the slowest configured scan interval. Note the fix lands in `web/`, not in `supervisor.py`, so it can ship over OTA |
+| 16 | **Several dashboards, one health gate.** The supervisor watches one `health_url`; a single product instance failing is caught only by child restart | Each instance answers for itself on its own port, but `Supervisor.from_config` takes one URL. Widening it means editing `supervisor.py`, which debt #5 says can only reach a site through the installer — so this waits for a reason better than tidiness |
 
 ---
 

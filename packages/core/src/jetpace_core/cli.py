@@ -190,20 +190,48 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 # --- web ------------------------------------------------------------------
 
 def cmd_web(args: argparse.Namespace) -> int:
+    """
+    Serve one dashboard.
+
+    One process serves one set of products, so a site can run several: an
+    administrative instance carrying everything, bound to 127.0.0.1 and
+    therefore unreachable from the network, and one instance per product
+    bound to the LAN for the people who use it.
+
+    What this does NOT do is restrict anyone. A separate port is a
+    separate URL, not a separate permission: whoever can open the energy
+    port can type the administrative one unless something outside this
+    process stops them. The only boundary here that is actually enforced
+    is `--host`, because the operating system is what refuses a
+    connection to 127.0.0.1 from another machine. Per-user access is §10
+    and does not exist yet.
+    """
     import uvicorn
 
     from .web.app import create_app
-    from .web.products import load_default
+    from .web import products as products_
 
-    # Which products this install serves, from config/products.toml or
-    # from whatever is installed. Printed below because a missing product
-    # is otherwise invisible - the dashboard comes up, answers /healthz
-    # and is simply missing a tab.
-    enabled = load_default()
+    # --products wins over config, because the point of running several
+    # instances is that they differ. Without it, the install's own
+    # configuration decides - which is the single-dashboard case.
+    if args.shell_only:
+        enabled = []
+    elif args.products:
+        enabled = products_.load(
+            [s.strip() for s in args.products.split(",") if s.strip()])
+    else:
+        enabled = products_.load_default()
+
     app = create_app(paths.postgres_dsn(), enabled)
+    reachable = ("this machine only" if args.host in ("127.0.0.1", "localhost")
+                 else f"any host that can reach {args.host}")
     print(f"\n  dashboard   http://{args.host}:{args.port}/", flush=True)
+    # Printed because a missing product is otherwise invisible: the
+    # dashboard comes up, answers /healthz and is simply missing a tab.
     print(f"  products    "
-          f"{', '.join(p.slug for p in enabled) or 'none'}", flush=True)
+          f"{', '.join(p.slug for p in enabled) or 'none (shell only)'}",
+          flush=True)
+    print(f"  reachable   {reachable}", flush=True)
     print(f"  health      http://{args.host}:{args.port}/healthz", flush=True)
     print(f"  api docs    http://{args.host}:{args.port}/api/docs\n",
           flush=True)
@@ -302,8 +330,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_ingest)
 
     p = sub.add_parser("web", help="serve the dashboard")
-    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--host", default="127.0.0.1",
+                   help="127.0.0.1 keeps it on this machine; 0.0.0.0 "
+                        "exposes it to the network, and nothing in this "
+                        "software authenticates anybody yet")
     p.add_argument("--port", type=int, default=1885)
+    which = p.add_mutually_exclusive_group()
+    which.add_argument("--products", metavar="SLUG[,SLUG]",
+                       help="serve only these products, overriding "
+                            "config/products.toml - how one install runs a "
+                            "dashboard per product on its own port")
+    which.add_argument("--shell-only", action="store_true",
+                       help="serve the overview and device pages with no "
+                            "product views at all")
     p.set_defaults(func=cmd_web)
 
     p = sub.add_parser("where", help="print the resolved paths")

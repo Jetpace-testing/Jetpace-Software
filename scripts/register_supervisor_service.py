@@ -117,7 +117,50 @@ def service_state() -> str:
 
 # ---------------------------------------------------------------------------
 
-def write_config(port: int, with_sim: bool, sim_units: int) -> Path:
+def enabled_products() -> list[str]:
+    """
+    Which products this install serves, asked of the same code the
+    dashboard asks.
+
+    Not a list written here: this script is shared by both products and
+    must name neither, and a second copy of the answer would drift from
+    config/products.toml the first time somebody edited one of them.
+    """
+    try:
+        from jetpace_core.web import products
+    except ImportError:            # pragma: no cover - a broken checkout
+        say("WARNING: jetpace_core is not importable, so no product "
+            "dashboards will be configured")
+        return []
+    configured = products.enabled()
+    if configured is None:
+        return [s for s in products.KNOWN if products.importable(s)]
+    return list(configured)
+
+
+def port_is_free(port: int) -> bool:
+    """
+    Whether we can bind it right now.
+
+    Worth asking before writing a config: the ports a product dashboard
+    lands on are derived from the base port, and on a developer machine
+    the obvious derivations collide with other projects. A supervisor
+    child that cannot bind exits, gets restarted, exits again - visible
+    only in its own log.
+    """
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+    return True
+
+
+def write_config(port: int, with_sim: bool, sim_units: int,
+                 product_host: str = "127.0.0.1",
+                 product_ports: dict[str, int] | None = None) -> Path:
     """
     What the service will run, as a file a person can read.
 
@@ -170,10 +213,35 @@ def write_config(port: int, with_sim: bool, sim_units: int) -> Path:
                   "--sink", "mqtt"]},
         {"name": "ingest",
          "args": [py, str(ROOT / "scripts" / "run_ingest.py")]},
+    ]
+
+    # The administrative dashboard: every product this install carries, so
+    # whoever is looking after the system can see all of it, and bound to
+    # 127.0.0.1 so that only someone at this PC can reach it. That bind is
+    # the one access boundary here that is actually enforced - by the
+    # operating system, which refuses the connection - because nothing in
+    # this software authenticates anybody yet (§10).
+    children.append(
         {"name": "web",
          "args": [py, str(ROOT / "scripts" / "run_web.py"),
-                  "--port", str(port)]},
-    ]
+                  "--host", "127.0.0.1", "--port", str(port)]})
+
+    # Then one dashboard per product, each carrying only its own views, on
+    # its own port, for the people who use that product. A separate port
+    # is a separate URL and NOT a separate permission: anyone who can
+    # reach one of these can type the administrative port unless a
+    # firewall or a different --product-host stops them.
+    slugs = enabled_products()
+    ports = dict(product_ports or {})
+    for index, slug in enumerate(slugs):
+        chosen = ports.get(slug, port + 1 + index)
+        ports[slug] = chosen
+        children.append(
+            {"name": f"web-{slug}",
+             "args": [py, str(ROOT / "scripts" / "run_web.py"),
+                      "--host", product_host,
+                      "--port", str(chosen),
+                      "--products", slug]})
 
     config = {
         "_comment": ("Written by scripts/register_supervisor_service.py. "
@@ -186,7 +254,48 @@ def write_config(port: int, with_sim: bool, sim_units: int) -> Path:
     }
     CONFIG_FILE.write_text(json.dumps(config, indent=2) + "\n",
                            encoding="utf-8")
+
+    # Say exactly what was written, every time.
+    #
+    # This block exists because of a real incident: this script was run
+    # with --replace and nothing else, and its defaults quietly moved the
+    # dashboard to another port and dropped the simulator. Both are
+    # one-word flags and both failures were silent - the service came
+    # back up, /healthz answered ok:true because it counts readings over
+    # 24 hours rather than checking freshness, and the data had stopped.
+    # A config written without being read back is a config nobody
+    # checked.
     say(f"wrote {CONFIG_FILE.name}  ({len(children)} children)")
+    print()
+    for child in children:
+        detail = ""
+        if child["name"].startswith("web"):
+            argv = child["args"]
+            host = argv[argv.index("--host") + 1]
+            bound = argv[argv.index("--port") + 1]
+            where = ("this machine only" if host == "127.0.0.1"
+                     else f"reachable on {host}")
+            detail = f"http://{host}:{bound}/   {where}"
+        optional = "" if child.get("required", True) else "  (optional)"
+        print(f"    {child['name']:16} {detail}{optional}", flush=True)
+    print()
+
+    if not with_sim:
+        say("no simulator: the poller will read real instruments only. "
+            "Pass --with-sim if this machine has none.")
+
+    taken = [(c["name"], c["args"][c["args"].index("--port") + 1])
+             for c in children if c["name"].startswith("web")]
+    busy = [f"{name} on {bound}" for name, bound in taken
+            if not port_is_free(int(bound))]
+    if busy:
+        say(f"NOTE: already in use: {', '.join(busy)}.")
+        say("  A port held by the dashboard being replaced is expected - the "
+            "old child is stopped before the new one binds. A port held by "
+            "anything else means that dashboard will fail to bind and be "
+            "restarted in a loop, visible only in its own log; pass --port "
+            "or --product-port to move it.")
+
     return CONFIG_FILE
 
 
@@ -226,7 +335,8 @@ def set_service_environment(config: Path) -> None:
 
 
 def register(account: str, port: int, with_sim: bool, sim_units: int,
-             replace: bool = False) -> None:
+             replace: bool = False, product_host: str = "127.0.0.1",
+             product_ports: dict[str, int] | None = None) -> None:
     need_admin()
     if not PYTHONSERVICE.exists():
         die(f"{PYTHONSERVICE} is missing.\n\n"
@@ -243,7 +353,9 @@ def register(account: str, port: int, with_sim: bool, sim_units: int,
         say("removing the existing registration first")
         unregister(quiet=True)
 
-    config = write_config(port, with_sim, sim_units)
+    config = write_config(port, with_sim, sim_units,
+                          product_host=product_host,
+                          product_ports=product_ports)
 
     # Registered through pywin32's own installer rather than `sc create`.
     #
@@ -389,6 +501,17 @@ def main() -> None:
     ap.add_argument("--sim-units", type=int, default=3)
     ap.add_argument("--replace", action="store_true",
                     help="remove an existing registration and register again")
+    ap.add_argument("--product-host", default="127.0.0.1",
+                    help="interface for the per-product dashboards. "
+                         "127.0.0.1 keeps them on this machine; a site "
+                         "that wants them on the LAN passes 0.0.0.0 - and "
+                         "should know that nothing authenticates anybody "
+                         "yet")
+    ap.add_argument("--product-port", action="append", default=[],
+                    metavar="SLUG=PORT",
+                    help="pin one product's dashboard port. Repeatable. "
+                         "Without it, ports are derived from --port, which "
+                         "on a machine running other projects may collide")
     ap.add_argument("--account", default="LocalSystem",
                     help="service account; see the note at the top of this "
                          "file before changing it")
@@ -399,9 +522,17 @@ def main() -> None:
     if args.unregister:
         return unregister()
 
+    pinned: dict[str, int] = {}
+    for item in args.product_port:
+        slug, _, value = item.partition("=")
+        if not value.isdigit():
+            die(f"--product-port {item!r} is not SLUG=PORT")
+        pinned[slug.strip()] = int(value)
+
     print(f"\nRegistering {SERVICE}\n")
     register(args.account, args.port, args.with_sim, args.sim_units,
-             replace=args.replace)
+             replace=args.replace, product_host=args.product_host,
+             product_ports=pinned)
     print(f"\nDone. It will now start at boot, before anyone signs in.\n")
     print(f"  check it    python scripts/register_supervisor_service.py --status")
     print(f"  logs        {ROOT / '.local' / 'logs'}")

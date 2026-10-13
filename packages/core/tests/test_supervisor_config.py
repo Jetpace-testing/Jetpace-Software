@@ -128,8 +128,10 @@ def test_the_service_wrapper_imports_no_application_code():
                  if n == bad or n.startswith(bad + ".")}
     assert not offenders, f"service.py imports {offenders}"
 
+    # "jetpace" rather than "jetpace_core", so that an import of a product
+    # package is caught too - see the same note in test_supervisor.py.
     ours = {n for n in names
-            if n.startswith(".") or n.startswith("jetpace_core")}
+            if n.startswith(".") or n.startswith("jetpace")}
     assert ours == {".supervisor"}, f"unexpected internal imports: {ours}"
 
 

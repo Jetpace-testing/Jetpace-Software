@@ -11,9 +11,6 @@ app role's append-only grant on `reading` costs it nothing.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
-
 import psycopg
 from psycopg.rows import dict_row
 
@@ -25,15 +22,11 @@ from psycopg.rows import dict_row
 OFFLINE_AFTER = "interval '90 seconds'"
 
 
-@dataclass(frozen=True)
-class Summary:
-    devices: int
-    online: int
-    rooms_in_spec: int
-    rooms_total: int
-    excursions_24h: int
-    readings_24h: int
-    newest: datetime | None
+# A `Summary` dataclass used to sit here declaring rooms_in_spec,
+# rooms_total and excursions_24h beside the shared counts. Nothing ever
+# referenced it - summary() returns a plain dict - so it was both dead and
+# a description of one product's screen living in the shared layer. The
+# shared summary is defined by SUMMARY below and nothing else.
 
 
 def connect(dsn: str) -> psycopg.Connection:
@@ -244,8 +237,11 @@ DEVICE = """
 SELECT d.code,
        d.name,
        d.unit_id,
-       d.ct_ratio,
-       d.pt_ratio,
+       -- ct_ratio and pt_ratio were selected here and rendered nowhere.
+       -- They are current- and potential-transformer ratios, which only an
+       -- electricity meter has, so a shell query asking for them is the
+       -- shell knowing about the energy product. The columns stay in the
+       -- schema; energy selects them when it has a page that shows them.
        d.commissioned_at,
        g.label         AS gateway,
        g.host,

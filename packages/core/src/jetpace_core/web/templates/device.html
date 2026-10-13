@@ -60,7 +60,11 @@
           <button class="chip{{ ' current' if loop.first }}" type="button"
                   data-param="{{ p.key }}"
                   data-unit="{{ p.unit }}"
-                  data-decimals="{{ p.decimals }}">{{ p.label }}</button>
+                  data-decimals="{{ p.decimals }}"
+                  {# How the parameter is measured, not which product it
+                     belongs to. The chart uses it to decide whether zero
+                     is a meaningful reference - see the note below. #}
+                  data-aggregation="{{ p.aggregation }}">{{ p.label }}</button>
         {% endfor %}
       </div>
       <div class="group" role="group" aria-label="Time range">
@@ -99,13 +103,15 @@ ready(function () {
   }
 
   var chart = registerChart(echarts.init(el));
-  var state = { param: null, unit: "", decimals: 1, hours: 24, rows: [] };
+  var state = { param: null, unit: "", decimals: 1, aggregation: "",
+                hours: 24, rows: [] };
 
   var first = document.querySelector("[data-param]");
   if (first) {
     state.param = first.dataset.param;
     state.unit = first.dataset.unit;
     state.decimals = parseInt(first.dataset.decimals, 10);
+    state.aggregation = first.dataset.aggregation || "";
   }
 
   function fmt(v) {
@@ -177,10 +183,20 @@ ready(function () {
         emphasis: { disabled: true } }
     ];
 
-    // Zero matters for a pressure cascade and nowhere else, so the line is
-    // drawn only when the data actually crosses it or comes near.
+    // Zero is worth marking when crossing it changes the meaning of the
+    // reading, and that is a property of the measurement rather than of a
+    // product. A counter only climbs, so zero is just where it started and
+    // a reference line there says nothing; for anything measured
+    // instantaneously - a pressure that can reverse, a flow, a power
+    // factor - the sign is the whole point.
+    //
+    // This used to read "zero matters for a pressure cascade and nowhere
+    // else", which was the shared device page knowing about cleanrooms.
+    // Behaviour is unchanged: a kWh counter never approaches zero, so it
+    // never drew the line anyway.
     var lows = rows.map(function (r) { return r[2]; });
-    if (lows.length && Math.min.apply(null, lows) <= 2) {
+    if (state.aggregation !== "counter"
+        && lows.length && Math.min.apply(null, lows) <= 2) {
       opt.series[2].markLine = {
         silent: true, symbol: "none",
         label: { formatter: "0", color: cssVar("--muted"), fontSize: 10 },
@@ -244,6 +260,7 @@ ready(function () {
     state.param = b.dataset.param;
     state.unit = b.dataset.unit;
     state.decimals = parseInt(b.dataset.decimals, 10);
+    state.aggregation = b.dataset.aggregation || "";
   });
   wire("data-hours", function (b) {
     state.hours = parseFloat(b.dataset.hours);

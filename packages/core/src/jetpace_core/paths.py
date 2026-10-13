@@ -66,8 +66,29 @@ def install_root() -> Path:
         # using it would put the database inside the thing updates replace.
         return Path(sys.executable).resolve().parent.parent
 
-    # packages/core/src/jetpace_core/paths.py -> four parents to the root.
-    return Path(__file__).resolve().parents[4]
+    # A marker file, not a parent count.
+    #
+    # This used to be `parents[4]`, with a comment counting the levels. It
+    # was right, but it is right only for a file at exactly this depth, and
+    # web/app.py had made the same mistake one level out - it counted four
+    # where it needed five, and the only symptom was the dashboard
+    # refusing to start with "No database". As packages/ grows a module
+    # three directories deep gets a different number, and nothing says so
+    # until something cannot find its password.
+    #
+    # uv.lock specifically, and not pyproject.toml: there is a
+    # pyproject.toml in every workspace member, so a walk looking for that
+    # would stop at packages/core and call it the root. The lock file
+    # exists once, at the workspace root, which is the thing being looked
+    # for.
+    here = Path(__file__).resolve()
+    for directory in here.parents:
+        if (directory / "uv.lock").exists():
+            return directory
+
+    # No lock file anywhere above: not a workspace checkout, so fall back
+    # to the depth this file actually sits at.
+    return here.parents[4]
 
 
 def data_dir() -> Path:

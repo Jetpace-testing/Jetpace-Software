@@ -15,7 +15,6 @@ out of the poller keeps it out of the web layer.
 
 from __future__ import annotations
 
-import os
 from collections import defaultdict
 from pathlib import Path
 
@@ -277,30 +276,9 @@ def create_app(dsn: str) -> FastAPI:
     return app
 
 
-def find_repo_root() -> Path | None:
-    """
-    Walk up looking for the workspace root, rather than counting parents.
-
-    Counting was the first version and it was wrong - this file sits five
-    levels down, not four, and the error only showed up as "No database"
-    when the server refused to start. A marker file cannot be miscounted,
-    and it keeps working if the package ever moves.
-    """
-    for directory in Path(__file__).resolve().parents:
-        if (directory / "uv.lock").exists() or (directory / ".local").is_dir():
-            return directory
-    return None
-
-
-def dsn_from_env() -> str:
-    if env := os.environ.get("JETPACE_DSN"):
-        return env
-    root = find_repo_root()
-    pw = root / ".local" / "app_password" if root else None
-    if pw is None or not pw.exists():
-        raise SystemExit(
-            "No database password found.\n"
-            "  Run: python scripts/setup_postgres.py\n"
-            "  Or set JETPACE_DSN to a connection string.")
-    return (f"postgresql://jetpace_app:{pw.read_text().strip()}"
-            f"@127.0.0.1:5433/jetpace")
+# find_repo_root() and dsn_from_env() used to live here and had no callers
+# left: cmd_web builds the app with paths.postgres_dsn(). They were also a
+# second, slightly different answer to "where is the root" - this one
+# looked for .local and so could not resolve a frozen install, where the
+# directory is called data. One root finder is now in jetpace_core.paths,
+# which is where the lesson about not counting parents is written down.

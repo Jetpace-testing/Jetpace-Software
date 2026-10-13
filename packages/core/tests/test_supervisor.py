@@ -60,8 +60,12 @@ def test_the_supervisor_imports_no_application_code():
 
 
 def test_the_supervisor_imports_only_one_of_our_modules():
+    # "jetpace", not "jetpace_core": once energy and environment are their
+    # own packages, a filter on jetpace_core would not see an import of
+    # jetpace_energy at all, and this test would keep passing while the
+    # supervisor grew a dependency on a product.
     ours = {n for n in _imports_of(SUPERVISOR_PY)
-            if n.startswith(".") or n.startswith("jetpace_core")}
+            if n.startswith(".") or n.startswith("jetpace")}
     assert ours <= ALLOWED_OWN, (
         f"unexpected internal imports: {ours - ALLOWED_OWN}. Keep the "
         f"supervisor's surface small enough to reason about.")

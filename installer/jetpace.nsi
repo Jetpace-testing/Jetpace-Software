@@ -80,20 +80,38 @@ Function .onInit
     Abort
   ${EndIf}
   SetRegView 64
-
-  ; An upgrade must not run over a running service: the files are held open
-  ; and the install would half-apply. Stop them, and put them back only if
-  ; the install gets that far.
-  DetailPrint "Stopping any running Jetpace services"
-  nsExec::ExecToLog 'sc.exe stop "${SVC_SUP}"'
-  nsExec::ExecToLog 'sc.exe stop "${SVC_DB}"'
-  Sleep 3000
 FunctionEnd
+
+; NOTHING WITH A SIDE EFFECT BELONGS IN .onInit.
+;
+; This used to stop both services there, so that an upgrade would not try
+; to overwrite files a running service holds open. The reasoning was right
+; and the placement was wrong: .onInit runs before the Welcome page, so
+; merely OPENING the installer stopped a running system - and cancelling
+; at the first page left it stopped.
+;
+; It did exactly that on the development machine: both services down, a
+; clean reverse-order shutdown in the supervisor log, and no install. On a
+; customer's PC it is worse - somebody double-clicks the file to see what
+; it is, monitoring stops, and nothing on screen says so.
+;
+; The stop now happens at the start of the install section, after the user
+; has chosen a directory and pressed Install. By then they have agreed to
+; something.
 
 ; ---------------------------------------------------------------------------
 
 Section "Jetpace" SEC_MAIN
   SectionIn RO
+
+  ; An upgrade must not be written over a running service: the files are
+  ; held open and the install half-applies. Here rather than in .onInit -
+  ; see the note above.
+  DetailPrint "Stopping any running Jetpace services"
+  nsExec::ExecToLog 'sc.exe stop "${SVC_SUP}"'
+  nsExec::ExecToLog 'sc.exe stop "${SVC_DB}"'
+  Sleep 3000
+
   SetOutPath "$INSTDIR"
   SetOverwrite on
 

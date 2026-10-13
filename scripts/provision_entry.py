@@ -226,9 +226,14 @@ def main() -> int:
         try:
             fn()
         except SystemExit as exc:
-            # The scripts call die(), which raises SystemExit with their own
-            # message already printed. Add which step it was.
-            fail(f"{label.lower()} did not complete (exit {exc.code})")
+            # The scripts call die(), and fail() above raises SystemExit too
+            # - in both cases the reason has already been printed. Say which
+            # step it was and stop, rather than printing a second banner
+            # under the first, which is what this did at the one moment
+            # somebody is reading carefully.
+            print(f"  ...while {label.lower()} (exit {exc.code})",
+                  file=sys.stderr, flush=True)
+            return 1
         except Exception as exc:                            # noqa: BLE001
             fail(f"{label.lower()}: {exc}")
 

@@ -13,6 +13,7 @@ jetpace-core = { workspace = true }
 
 [dependency-groups]
 dev = [
+    "pyinstaller>=6.11",
     "pytest>=8.0",
 ]
 

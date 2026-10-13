@@ -31,3 +31,7 @@ Modbus Mapping/
 
 # Written by scripts/register_supervisor_service.py; absolute paths, per machine.
 /supervisor.json
+
+# Build output: frozen bundles and release payloads, rebuilt by scripts/build.py.
+/dist/
+/build/

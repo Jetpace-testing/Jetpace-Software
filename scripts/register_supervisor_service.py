@@ -60,6 +60,9 @@ CONFIG_FILE = ROOT / "supervisor.json"
 # "the dashboard died at boot" from the picture.
 DEPENDS_ON = "jetpace-postgres"
 
+MOSQUITTO_EXE = ROOT / "installer" / "vendor" / "mosquitto" / "mosquitto.exe"
+MOSQUITTO_CONF = ROOT / ".local" / "mosquitto" / "jetpace.conf"
+
 VENV = ROOT / ".venv"
 PYTHON = VENV / "Scripts" / "python.exe"
 PYTHONSERVICE = VENV / "Lib" / "site-packages" / "win32" / "pythonservice.exe"
@@ -124,6 +127,34 @@ def write_config(port: int, with_sim: bool, sim_units: int) -> Path:
     """
     py = str(PYTHON if PYTHON.exists() else Path(sys.executable))
     children: list[dict] = []
+
+    # The broker comes first, and it is a child rather than a service of its
+    # own. Mosquitto's Windows service support resisted three attempts:
+    # `sc create` with `run -c <conf>` is rejected ("Unknown option 'run'"),
+    # and `mosquitto install` on a renamed copy registers a service that
+    # starts, binds nothing, logs nothing and hangs in StartPending. The
+    # plain command below is documented, appears in `mosquitto -h`, passes
+    # --test-config and ran for two days.
+    #
+    # The supervisor is already a service that starts at boot and restarts
+    # what dies, so the broker gets the properties that were wanted anyway,
+    # through a mechanism that is proven rather than reverse-engineered.
+    #
+    # Two consequences worth knowing. A supervisor restart - which every
+    # update performs - bounces the broker; `persistence true` in the config
+    # is what makes that survivable, and is the reason it is not optional.
+    # And the poller and ingest will fail their first connection while the
+    # broker is still binding, then succeed on the 5-second retry. Noisy in
+    # the log for one cycle, self-healing, and far better than a service
+    # that hangs.
+    if MOSQUITTO_EXE.exists() and MOSQUITTO_CONF.exists():
+        children.append({
+            "name": "broker",
+            "args": [str(MOSQUITTO_EXE), "-c", str(MOSQUITTO_CONF)],
+        })
+    else:
+        say(f"WARNING: {MOSQUITTO_EXE.name} or its config is missing, so the "
+            f"broker is not in the list. Run scripts/setup_mosquitto.py")
 
     if with_sim:
         children.append({

@@ -396,10 +396,42 @@ def initdb() -> None:
     (DATA / "pg_hba.conf").write_text(HBA)
 
     SECRET.write_text(password)
-    if os.name == "nt":
-        run(["icacls", str(SECRET), "/inheritance:r", "/grant:r",
-             f"{os.environ.get('USERNAME', '')}:F"])
+    lock_down(SECRET)
     say(f"superuser password written to {SECRET.relative_to(ROOT)}")
+
+
+def lock_down(path: Path) -> None:
+    """
+    Take a secret file off the inherited ACL.
+
+    A file created inside the project tree inherits BUILTIN\\Users:(RX),
+    so any account that can log in can read it. That was true of
+    app_password and mqtt_password here for four days - only the superuser
+    password was being locked, which is the wrong one to pick if you only
+    pick one: app_password is what the running software authenticates with
+    and it grants read and write on every reading.
+
+    SYSTEM keeps access because the supervisor's children run as
+    LocalSystem and have to read these at startup. Administrators keep it
+    because an administrator can take ownership regardless, so removing it
+    buys nothing and makes recovery harder.
+
+    The identities are given as SIDs, not names: 'Administrators' and
+    'SYSTEM' are localised, and this has to work on a Windows installed in
+    any language.
+    """
+    if os.name != "nt":
+        return
+    r = run([
+        "icacls", str(path),
+        "/inheritance:r",
+        "/grant:r", "*S-1-5-18:F",           # NT AUTHORITY\\SYSTEM
+        "/grant:r", "*S-1-5-32-544:F",       # BUILTIN\\Administrators
+        "/grant:r", f"{os.environ.get('USERNAME', '')}:F",
+    ])
+    if r.returncode != 0:
+        say(f"WARNING: could not restrict {path.name}: {r.stderr.strip()}")
+        say("         it may be readable by any local user")
 
 
 def write_our_conf() -> None:
@@ -577,6 +609,7 @@ def create_database() -> None:
             if r.returncode != 0 and "already exists" not in r.stderr:
                 die(f"{stmt.split()[1]} failed:\n{r.stderr}")
         (LOCAL / "app_password").write_text(app_password)
+        lock_down(LOCAL / "app_password")
         say(f"created role {APP_ROLE} and database {APP_DB}")
 
     r = psql("CREATE EXTENSION IF NOT EXISTS timescaledb", database=APP_DB)

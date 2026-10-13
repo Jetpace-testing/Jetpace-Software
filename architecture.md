@@ -39,6 +39,7 @@ Modbus → poller → MQTT → ingest → TimescaleDB → dashboard, verified li
 | Ingest consumer | **built** | batches, idempotent, rejects malformed |
 | Dashboard | **built** | FastAPI + Jinja + HTMX + ECharts, assets local |
 | PostgreSQL as a service | **built** | `jetpace-postgres`, auto-start, NETWORK SERVICE |
+| Frozen build | **built** | `scripts/build.py` — app 43 MB, supervisor 33 MB |
 | Signed manifest + verify | **built** | Ed25519, fail-closed on an unset key |
 | Swap, trial, auto-rollback | **built** | `pending.json` state machine, two-pass swap |
 | Supervisor + health gate | **built** | children, backoff, `/healthz` trial |
@@ -55,7 +56,7 @@ Modbus → poller → MQTT → ingest → TimescaleDB → dashboard, verified li
 | `jetpace-energy` | not built | §3 |
 | `jetpace-environment` | not built | §3 |
 
-295 tests, all passing. 243,648 seeded readings. Schema version 4.
+315 tests, all passing. 243,648 seeded readings. Schema version 4.
 
 **Nothing can ship to a customer site until the updater works** (§12). That is
 not a preference — a deployed install with no way to receive a fix is a liability.
@@ -63,6 +64,31 @@ That now works end to end: a release is signed, fetched, verified, unpacked
 under protest, swapped in, put on trial behind a health gate, and rolled back
 automatically after three failed starts. What is missing is only the button —
 `scripts/update.py` drives exactly the path the web interface will call.
+
+### The install layout
+
+```
+<install root>/
+  app/                 the frozen application; jetpace.exe + _internal/   REPLACEABLE
+  version.json         what app/ currently is                             REPLACEABLE
+  supervisor/          the frozen supervisor, its own bundle
+  config/              prototype.toml
+  migrations/          numbered SQL, run at install time
+  data/                secrets, the database, logs           (.local/ in a checkout)
+  update/              staging, backup, failed, downloads
+```
+
+Only the first two are in `REPLACEABLE`, and the rest of the list is the
+reason. The supervisor cannot be in it — a running executable holds its own
+file open. `data/` must not be in it, or the first successful update would
+delete a customer's readings, passwords and logs silently. One executable
+serves all three jobs (`jetpace.exe poller|ingest|web`) because three bundles
+would be three copies of Python, psycopg, pymodbus and uvicorn.
+
+**Proven end to end on real frozen binaries**: a 43 MB `app/` at 1.0.0,
+a signed 19.7 MB release of 1.0.1, downloaded, hash-checked, name-checked,
+unpacked, swapped in, and the frozen executable afterwards reporting 1.0.1
+with 1.0.0 kept as the backup.
 
 ### How an update runs
 
@@ -403,7 +429,7 @@ Honest register of where the repo and the specification disagree.
 | 8 | `energy` and `environment` packages do not exist | Expected at this stage; listed so the layout is not mistaken for the target |
 | 9 | **`zipfile.extractall` must never be used on a release** | It sanitises silently — strips leading slashes, drops `..` — and carries on. `archive.py` refuses instead, because such a name means the release was built wrong or built by someone else. Enforced by 53 tests |
 | 10 | The release key in `key.py` is a **development** key | Generated on the build laptop, private half in gitignored `.local/release-key.pem`. Must be replaced before the first customer install, and custody written down |
-| 11 | **No frozen build.** There is no PyInstaller `app/` directory, so the repository is not an installable layout | The update mechanism was proven against a synthetic install tree, not this one. `REPLACEABLE` names `app/`, which the dev tree does not have — so a release cannot actually be applied here. The freeze is the next real piece |
+| 11 | **No installer, and no vendored payload inside it.** `installer/` holds only `vendor/`; there is no NSIS package, and `setup_postgres.py` still downloads 350 MB at run time | A plant PC has no Python and often no internet. The 169 MB in `installer/vendor/` has to ship inside the package. Mosquitto also still needs its own installer run by hand first, because it publishes no zip |
 
 ---
 

@@ -137,6 +137,19 @@ def service_state(name: str = SERVICE) -> str:
     return "unknown"
 
 
+def service_pid(name: str = SERVICE) -> int | None:
+    """The process id the SCM has for a service, or None if it has none."""
+    r = run(["sc", "queryex", name])
+    for line in r.stdout.splitlines():
+        if "PID" in line:
+            try:
+                pid = int(line.split(":", 1)[1].strip())
+            except (ValueError, IndexError):
+                return None
+            return pid or None          # the SCM reports 0 when not running
+    return None
+
+
 def port_open(port: int = PORT) -> bool:
     with socket.socket() as s:
         s.settimeout(0.3)
@@ -326,10 +339,31 @@ def unregister(quiet: bool = False) -> None:
 
     say("stopping the service")
     run(["sc", "stop", SERVICE], timeout=120)
-    for _ in range(60):
+    for _ in range(40):
         time.sleep(0.5)
         if "STOPPED" in service_state():
             break
+    else:
+        # A service stuck in START_PENDING never reaches STOPPED, because
+        # `sc stop` asks a process that is not listening to requests yet.
+        # Waiting longer does not help - the process has to be killed.
+        #
+        # Which is what happened here: the hung jetpace-mosquitto was left
+        # registered because the first version of this function waited for
+        # a state that could never arrive, so the delete below never ran.
+        state = service_state()
+        say(f"it is {state} and will not stop; killing its process")
+        # By PID from the service itself, never by image name. The
+        # supervisor runs the live broker as mosquitto.exe, so
+        # `taskkill /IM mosquitto.exe` would take down the working one
+        # along with the hung one.
+        pid = service_pid()
+        if pid:
+            r = run(["taskkill", "/F", "/PID", str(pid), "/T"])
+            say(f"  pid {pid}: {'killed' if r.returncode == 0 else 'would not die'}")
+        else:
+            say("  could not find its process id; delete may fail")
+        time.sleep(1.0)
 
     # Prefer mosquitto's own uninstall, so whatever its install created is
     # undone the way it expects. Fall back to sc delete for a service this

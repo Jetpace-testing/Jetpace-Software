@@ -137,6 +137,16 @@ def write_config() -> None:
         if r.returncode != 0:
             die(f"mosquitto_passwd failed:\n{r.stdout}\n{r.stderr}")
         SECRET.write_text(password)
+        # Same restriction as the database passwords: off the inherited
+        # ACL, so a local user cannot read it. See lock_down() in
+        # setup_postgres.py for why SIDs rather than names.
+        if os.name == "nt":
+            subprocess.run([
+                "icacls", str(SECRET), "/inheritance:r",
+                "/grant:r", "*S-1-5-18:F",
+                "/grant:r", "*S-1-5-32-544:F",
+                "/grant:r", f"{os.environ.get('USERNAME', '')}:F",
+            ], capture_output=True, text=True, timeout=30)
         say(f"created broker user {USER}; password in "
             f"{SECRET.relative_to(ROOT)}")
     else:

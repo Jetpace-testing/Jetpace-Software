@@ -17,8 +17,14 @@ docs/architecture-flow.html            -text
 docs/architecture-flow.visual-check.*  -text
 
 # Third-party payloads, vendored deliberately so the dashboard makes zero
-# external requests. Not ours to reformat, and candidates for hash pinning.
+# external requests. Not ours to reformat, and hash-pinned in the README
+# beside them - a line-ending rewrite inside a .woff2 corrupts it silently
+# and changes every recorded hash of a .js for no reason.
 packages/core/src/jetpace_core/web/static/vendor/*  -text
+
+# Except our own note about them, which is ours and should diff like text.
+# Later rules win, so this has to stay below the line above.
+packages/core/src/jetpace_core/web/static/vendor/README.md  text eol=lf
 
 # Binary, so git should never guess.
 *.png   binary

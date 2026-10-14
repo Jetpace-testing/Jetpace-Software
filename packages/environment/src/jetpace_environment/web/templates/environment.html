@@ -136,7 +136,7 @@ ready(function () {
             axisPointer: { type: "line", lineStyle: { color: axis } },
             backgroundColor: cssVar("--surface"),
             borderColor: cssVar("--hairline"),
-            textStyle: { color: cssVar("--ink"), fontSize: 12 },
+            textStyle: { color: cssVar("--ink"), fontSize: typeAt(12) },
             formatter: function (ps) {
               var i = ps[0].dataIndex;
               return new Date(s.avg[i][0]).toLocaleString() +
@@ -149,7 +149,7 @@ ready(function () {
             type: "time",
             axisLine: { lineStyle: { color: axis } },
             axisTick: { show: false },
-            axisLabel: { color: muted, fontSize: 10 },
+            axisLabel: { color: muted, fontSize: typeAt(10) },
             splitLine: { show: false }
           },
           yAxis: {
@@ -160,7 +160,7 @@ ready(function () {
             // exact gridline count is not what anyone is looking for.
             splitNumber: 3,
             axisLine: { show: false }, axisTick: { show: false },
-            axisLabel: { color: muted, fontSize: 10 },
+            axisLabel: { color: muted, fontSize: typeAt(10) },
             splitLine: { lineStyle: { color: grid } }
           },
           series: [{

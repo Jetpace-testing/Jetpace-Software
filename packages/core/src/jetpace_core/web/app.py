@@ -136,6 +136,71 @@ EXPORTS: tuple[tuple[str, str, str], ...] = (
 SPARK_W, SPARK_H = 100.0, 24.0
 
 
+# How many figures the shell contributes to the overview before any
+# product adds its own: devices, online, offline, readings in 24 h.
+# Pinned to _kpis.html by a test, because this number exists only to work
+# out how to lay the row out and would otherwise drift the first time
+# somebody adds a fifth.
+SHELL_TILES = 4
+
+# The most figures that stay readable in one row, at three widths. Nine
+# in a row measured 139px a card, which is what "a bit small" meant.
+KPI_CAPS = {"": 5, "md": 4, "sm": 2}
+
+
+def kpi_grid(tiles: int) -> str:
+    """
+    The custom properties the figures row carries, as a style attribute.
+
+    One per breakpoint, because `repeat()` takes an integer and CSS has
+    no way to cap one - so the caps are applied here, where the tile
+    count is already known, and the stylesheet's media queries just
+    choose which of the three to read.
+    """
+    return "; ".join(
+        f"--kpi-cols{'-' + name if name else ''}: "
+        f"{kpi_columns(tiles, cap)}"
+        for name, cap in KPI_CAPS.items())
+
+
+def kpi_columns(tiles: int, cap: int) -> int:
+    """
+    How many columns the figures row should use, at most `cap` wide.
+
+    The design writes `repeat(7, ...)` because it has exactly seven
+    figures. We have four plus whatever the loaded products contribute:
+    four on a bare install, seven with one product, nine with both. A
+    fixed count is wrong for two of those three, and letting the browser
+    fill the row gave nine cards at 139px - then, one breakpoint down,
+    eight with a ninth stranded underneath.
+
+    SPREAD EVENLY OVER THE FEWEST ROWS THAT FIT UNDER THE CAP. Take the
+    minimum number of rows, then divide the figures across them rather
+    than filling each row to the cap. Nine under a cap of five is two
+    rows of five and four, not five and four by accident; nine under a
+    cap of four is three rows of three, not four, four and one.
+
+    THEN, IF THAT STILL STRANDS ONE, STEP DOWN. Nine under a cap of four
+    spreads to three rows of three; thirteen under the same cap spreads
+    to four columns and leaves a single card, so it tries three, then
+    two. Some counts cannot avoid it - thirteen leaves a remainder of one
+    at four, three and two columns alike - and those keep the widest
+    layout rather than being made narrow for nothing.
+
+    The browser cannot work this out, because the rule is about what the
+    row MEANS - a lone card under a full row reads as a mistake - rather
+    than about what fits.
+    """
+    tiles = max(tiles, 1)
+    rows = -(-tiles // cap)                 # ceil: fewest rows under the cap
+    ideal = min(cap, -(-tiles // rows))     # ceil: spread evenly over them
+
+    for columns in range(ideal, 1, -1):
+        if tiles <= columns or tiles % columns != 1:
+            return columns
+    return ideal
+
+
 def sparkline(values: Sequence[float]) -> str:
     """
     A list of numbers as SVG polyline coordinates.
@@ -511,11 +576,13 @@ def create_app(dsn: str,
         with queries.connect(dsn) as conn:
             rows = rows_for_live(conn)
             zones, counts = facility(conn)
+            tiles = product_tiles(conn)
             first = initial_device(rows)
             return templates.TemplateResponse(request, "index.html", {
                 "summary": queries.summary(conn),
                 "devices": rows,
-                "product_tiles": product_tiles(conn),
+                "product_tiles": tiles,
+                "kpi_columns": kpi_grid(SHELL_TILES + len(tiles)),
                 "distribution": queries.distribution(conn),
                 "zones": zones,
                 "counts": counts,
@@ -548,10 +615,12 @@ def create_app(dsn: str,
         """
         with queries.connect(dsn) as conn:
             zones, counts = facility(conn)
+            tiles = product_tiles(conn)
             return templates.TemplateResponse(request, "_live_push.html", {
                 "summary": queries.summary(conn),
                 "devices": rows_for_live(conn),
-                "product_tiles": product_tiles(conn),
+                "product_tiles": tiles,
+                "kpi_columns": kpi_grid(SHELL_TILES + len(tiles)),
                 "distribution": queries.distribution(conn),
                 "zones": zones,
                 "counts": counts,

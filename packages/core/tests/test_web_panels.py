@@ -517,3 +517,97 @@ def test_one_select_drives_both_the_card_and_the_trend():
     assert 'hx-include="#trend-device"' in page, (
         "the device card's poll must carry the selection, or a refresh "
         "snaps it back to the first device")
+
+
+# --- the figures row -----------------------------------------------------
+
+def test_the_shell_tile_count_matches_the_template():
+    """
+    SHELL_TILES exists only to work out how to lay the row out, so nothing
+    breaks loudly when it is wrong - the row just lays out for the wrong
+    number of cards. Pinned to the template that actually draws them.
+    """
+    markup = without_comments(TEMPLATES / "_kpis.html")
+    # The shell's own cards are the literal <article>s; a product's come
+    # from the loop, which this deliberately does not count.
+    before_loop = markup.split("{% for t in product_tiles", 1)[0]
+    assert before_loop.count("<article class=\"kpi-card") == A.SHELL_TILES
+
+
+@pytest.mark.parametrize("tiles,cap,expected", [
+    (9, 5, 5),      # the install carrying both products: 5 and 4
+    (9, 4, 3),      # not 4, 4 and 1 - spread over the rows it needs
+    (7, 5, 4),      # one product: 4 and 3
+    (4, 5, 4),      # no products: one row
+    (6, 5, 3),      # 3 and 3, rather than 5 and a lone card
+    (1, 5, 1),
+    (0, 5, 1),      # never zero: repeat(0, ...) is invalid CSS
+])
+def test_the_figures_row_is_balanced(tiles, cap, expected):
+    assert A.kpi_columns(tiles, cap) == expected
+
+
+def test_no_row_is_stranded_when_a_layout_exists_that_avoids_it(monkeypatch):
+    """
+    A lone card under a full row reads as a mistake, and on a wide screen
+    it is the first thing the eye lands on.
+
+    Not every count can avoid it - thirteen leaves a remainder of one at
+    four, three and two columns alike - so the claim is the honest one:
+    whenever SOME column count under the cap would avoid stranding, the
+    chosen one does.
+    """
+    for tiles in range(2, 24):
+        for cap in A.KPI_CAPS.values():
+            chosen = A.kpi_columns(tiles, cap)
+            possible = [c for c in range(2, cap + 1)
+                        if tiles <= c or tiles % c != 1]
+            if not possible:
+                continue
+            assert tiles <= chosen or tiles % chosen != 1, (
+                f"{tiles} tiles at {chosen} columns strands one card, "
+                f"and {possible} would not")
+
+
+def test_the_grid_carries_a_count_for_every_breakpoint():
+    """
+    `repeat()` takes an integer and CSS cannot cap one, and the element
+    carries these inline where a media query cannot reach them. So every
+    breakpoint the stylesheet reads has to be emitted here.
+    """
+    style = A.kpi_grid(9)
+    css = (A.HERE / "static" / "app.css").read_text(encoding="utf-8")
+    for name in A.KPI_CAPS:
+        prop = f"--kpi-cols{'-' + name if name else ''}"
+        assert f"{prop}:" in style
+        assert f"var({prop}," in css, (
+            f"{prop} is emitted and the stylesheet never reads it")
+
+
+# --- the type scale ------------------------------------------------------
+
+def test_no_font_size_bypasses_the_ramp():
+    """
+    The whole point of the ramp is that it moves from one place. A literal
+    px anywhere means the next person to raise the type misses it, and the
+    page ends up with two scales.
+    """
+    import re
+    for css in [A.HERE / "static" / "app.css"]:
+        text = css.read_text(encoding="utf-8")
+        strays = re.findall(r"font-size:\s*[0-9.]+(?:px|pt|em|rem)", text)
+        assert not strays, f"{css.name} sets {strays} outside the ramp"
+
+
+def test_chart_text_reads_the_same_ramp():
+    """
+    ECharts wants a number, so chart labels could easily drift off the
+    scale and sit at 11px while the table beside them moved to 13.
+    """
+    import re
+    base = (TEMPLATES / "_base.html").read_text(encoding="utf-8")
+    assert "function typeAt(step)" in base
+    for page in TEMPLATES.glob("*.html"):
+        text = page.read_text(encoding="utf-8")
+        strays = re.findall(r"fontSize:\s*\d+\b", text)
+        assert not strays, f"{page.name} sets {strays} outside the ramp"

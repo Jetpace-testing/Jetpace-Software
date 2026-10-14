@@ -88,7 +88,7 @@ ready(function () {
       opt.xAxis.type = "category";
       opt.xAxis.data = data.series[0].points.map(function (p) { return p[0]; });
       opt.yAxis.name = "kWh";
-      opt.yAxis.nameTextStyle = { color: muted, fontSize: 11, align: "right" };
+      opt.yAxis.nameTextStyle = { color: muted, fontSize: typeAt(11), align: "right" };
       opt.tooltip.axisPointer = { type: "shadow" };
       opt.series = data.series.map(function (s, i) {
         return {

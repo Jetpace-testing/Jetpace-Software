@@ -138,9 +138,9 @@ ready(function () {
           subtext: "The window is " + payload.window
                  + ". Try a longer one, or check the device is reporting.",
           left: "center", top: "middle",
-          textStyle: { color: cssVar("--muted"), fontSize: 14,
+          textStyle: { color: cssVar("--muted"), fontSize: typeAt(14),
                        fontWeight: "normal" },
-          subtextStyle: { color: cssVar("--muted"), fontSize: 12 }
+          subtextStyle: { color: cssVar("--muted"), fontSize: typeAt(12) }
         }
       }, true);
       document.getElementById("trend-source").textContent =
@@ -160,16 +160,16 @@ ready(function () {
 
     var opt = chartBase();
     opt.yAxis.name = state.unit;
-    opt.yAxis.nameTextStyle = { color: cssVar("--muted"), fontSize: 11,
+    opt.yAxis.nameTextStyle = { color: cssVar("--muted"), fontSize: typeAt(11),
                                 align: "left" };
     opt.yAxis.nameLocation = "end";
     opt.tooltip.formatter = function (ps) {
       if (!ps.length) return "";
       var i = ps[0].dataIndex, r = rows[i];
       var when = new Date(r[0]).toLocaleString();
-      return "<div style='font-size:11px;opacity:.7'>" + when + "</div>"
+      return "<div style='font-size:var(--t-11);opacity:.7'>" + when + "</div>"
         + "<strong>" + fmt(r[1]) + " " + state.unit + "</strong>"
-        + "<div style='font-size:11px;opacity:.7'>range " + fmt(r[2])
+        + "<div style='font-size:var(--t-11);opacity:.7'>range " + fmt(r[2])
         + " to " + fmt(r[3]) + " &middot; " + r[4] + " samples</div>";
     };
     opt.series = [
@@ -200,7 +200,7 @@ ready(function () {
         && lows.length && Math.min.apply(null, lows) <= 2) {
       opt.series[2].markLine = {
         silent: true, symbol: "none",
-        label: { formatter: "0", color: cssVar("--muted"), fontSize: 10 },
+        label: { formatter: "0", color: cssVar("--muted"), fontSize: typeAt(10) },
         lineStyle: { color: cssVar("--critical"), type: "dashed", width: 1 },
         data: [{ yAxis: 0 }]
       };

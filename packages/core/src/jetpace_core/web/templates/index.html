@@ -27,7 +27,7 @@
      their query is the only expensive one on the page. The trend panel
      is not polled at all - it belongs to whoever is reading it. #}
 
-  <section class="kpi-grid" id="kpis" aria-label="Key figures">
+  <section class="kpi-grid" id="kpis" style="{{ kpi_columns }}" aria-label="Key figures">
     {% include "_kpis.html" %}
   </section>
 
@@ -248,7 +248,7 @@ ready(function () {
     var opt = chartBase();
     opt.grid = { left: 48, right: 14, top: 10, bottom: 24 };
     opt.yAxis.name = state.unit;
-    opt.yAxis.nameTextStyle = { color: cssVar("--muted"), fontSize: 10,
+    opt.yAxis.nameTextStyle = { color: cssVar("--muted"), fontSize: typeAt(10),
                                 align: "left" };
     opt.yAxis.nameLocation = "end";
     opt.xAxis.axisLabel.fontSize = 10;
@@ -256,10 +256,10 @@ ready(function () {
     opt.tooltip.formatter = function (ps) {
       if (!ps.length) { return ""; }
       var r = rows[ps[0].dataIndex];
-      return "<div style='font-size:11px;opacity:.7'>"
+      return "<div style='font-size:var(--t-11);opacity:.7'>"
         + new Date(r[0]).toLocaleString() + "</div><strong>" + fmt(r[1])
         + " " + state.unit + "</strong>"
-        + "<div style='font-size:11px;opacity:.7'>range " + fmt(r[2])
+        + "<div style='font-size:var(--t-11);opacity:.7'>range " + fmt(r[2])
         + " to " + fmt(r[3]) + " &middot; " + r[4] + " samples</div>";
     };
     opt.series = [
@@ -286,7 +286,7 @@ ready(function () {
     if (marks) {
       opt.series[2].markLine = {
         silent: true, symbol: "none",
-        label: { formatter: "0", color: cssVar("--muted"), fontSize: 9 },
+        label: { formatter: "0", color: cssVar("--muted"), fontSize: typeAt(9) },
         lineStyle: { color: cssVar("--critical"), type: "dashed", width: 1 },
         data: [{ yAxis: 0 }]
       };

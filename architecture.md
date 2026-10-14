@@ -661,6 +661,8 @@ person does not take the design as a to-do list:
 | Three finished PDF reports with file sizes | Debt #18 |
 | Upper and lower limit lines on the trend | Same missing limits table as the alarm model. A threshold somebody could read a specification off would be the most dangerous thing on the page |
 | "Range 18–24 °C" on each parameter card | Likewise. The cards show the observed 24-hour range instead, labelled as observed |
+| 7–10px type throughout | Readable on a 27-inch mockup, not on a plant PC at arm's length. `app.css` carries a `--t-N` ramp where N is the design's size and the value is ours, one step larger; checking a declaration against the Figma file still works, and the scale moves from one block |
+| `repeat(7, …)` for the figures row | The design has exactly seven figures. We have four plus whatever the loaded products contribute — four, seven or nine — so the column count is computed per install and the rows are balanced rather than filled |
 
 Then P1 onward from §16: billing onto the aggregates, validated against twelve
 months of Meril reports to the paisa.

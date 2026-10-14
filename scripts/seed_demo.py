@@ -152,19 +152,55 @@ def rows(ids: dict[str, int], days: int):
 
 
 def clear(cur) -> None:
-    cur.execute("SELECT id FROM device WHERE code LIKE 'DEMO-%'")
-    device_ids = [r[0] for r in cur.fetchall()]
-    if not device_ids:
-        print("  nothing to clear")
+    """
+    Take the demo devices out of the system.
+
+    RETIRED, NOT DELETED, which is what migrations/0001 says a removed
+    device is: "a device removed from the sheet is switched off, not
+    deleted: it stops being polled and drops out of reports, but its
+    history stays". Every query in the application filters on
+    `retired_at IS NULL`, so a retired device vanishes from the overview,
+    the device list, the facility panel, the exceptions panel and the
+    exports in one statement - and a reading already written still has a
+    device row to explain what it was.
+
+    Deleting the rows would be worse in two ways. `reading` carries
+    `device_id` with no foreign key - it is a hypertable, and the
+    constraint would cost on every insert - so the readings would be
+    orphaned rather than removed, pointing at an id that no longer
+    resolves. And the decision would be irreversible, when the whole
+    reason to keep demo data around is that it is useful again the moment
+    somebody wants to see what a month of history looks like.
+
+    This used to print the DELETE and do nothing, which meant `--clear`
+    did not clear. Retiring is within jetpace_app's own grants - it has
+    UPDATE on every table, and only `reading` has UPDATE and DELETE
+    revoked - so this needs no superuser.
+    """
+    cur.execute("SELECT id, code FROM device "
+                " WHERE code LIKE 'DEMO-%' AND retired_at IS NULL")
+    found = cur.fetchall()
+    if not found:
+        print("  no demo devices are in service")
         return
-    # jetpace_app cannot DELETE from reading - append only, by design - so
-    # this needs the owner. Dropping the chunks is not an option either,
-    # since real readings share them.
-    print(f"  {len(device_ids)} demo device(s) found; readings are append-only "
-          f"for jetpace_app.")
-    print("  To remove demo readings, connect as jetpace_super:")
-    print("    DELETE FROM reading WHERE device_id IN "
-          f"({', '.join(map(str, device_ids))});")
+
+    cur.execute("UPDATE device SET retired_at = now() "
+                " WHERE code LIKE 'DEMO-%' AND retired_at IS NULL")
+    print(f"  retired {cur.rowcount} demo device(s): "
+          f"{', '.join(code for _, code in found)}")
+    print("  They are out of every page and every export. Their readings "
+          "stay; re-run this script without --clear to put them back.")
+
+    # And if somebody genuinely wants the rows gone - a validated install
+    # that must carry no fabricated data at all - say how. jetpace_app
+    # cannot do it: `reading` is append-only for the application role by
+    # design, which is a CLAUDE.md invariant. Dropping the chunks is not
+    # an option either, because real readings share them.
+    ids = ", ".join(str(i) for i, _ in found)
+    print()
+    print("  To purge the readings as well, connect as jetpace_super:")
+    print(f"    DELETE FROM reading WHERE device_id IN ({ids});")
+    print(f"    DELETE FROM device WHERE id IN ({ids});")
 
 
 def main() -> None:

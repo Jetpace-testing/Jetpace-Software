@@ -45,13 +45,13 @@
           grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
 .small { background: var(--surface); padding: 10px 12px 4px; }
 .small .head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
-.small .head b { font-size: 12.5px; font-weight: 600; }
-.small .head .code { font-size: 11px; color: var(--muted); }
-.small .head .now { margin-left: auto; font-size: 12px; font-weight: 600;
+.small .head b { font-size: var(--t-12); font-weight: 600; }
+.small .head .code { font-size: var(--t-11); color: var(--muted); }
+.small .head .now { margin-left: auto; font-size: var(--t-12); font-weight: 600;
                     font-variant-numeric: tabular-nums; }
 /* 92px put six y-axis labels into less than a hundred pixels and they
    ran into each other. The axis is capped at three ticks in the chart
    options; this gives those three somewhere to sit. */
 .small .mini { height: 124px; width: 100%; }
 .small .thin { height: 124px; display: flex; align-items: center;
-               justify-content: center; color: var(--muted); font-size: 12px; }
+               justify-content: center; color: var(--muted); font-size: var(--t-12); }

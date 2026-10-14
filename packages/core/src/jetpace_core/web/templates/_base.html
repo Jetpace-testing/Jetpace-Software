@@ -370,6 +370,20 @@
   });
 })();
 
+// Chart text comes off the same ramp as everything else.
+//
+// ECharts wants a number, so the token is read and parsed rather than
+// handed over as a string. The ARGUMENT IS THE DESIGN'S SIZE, exactly as
+// the CSS token names it, so an axis label and a table cell asking for
+// the same step get the same pixels - and moving the ramp moves the
+// charts with it, which is the whole point of having a ramp.
+//
+// Falls back to the step itself if the token is missing, which is what a
+// stylesheet that failed to load looks like: small text beats no text.
+function typeAt(step) {
+  return parseFloat(cssVar("--t-" + step)) || step;
+}
+
 function cssVar(name) {
   return getComputedStyle(document.documentElement)
     .getPropertyValue(name).trim();
@@ -391,20 +405,20 @@ function chartBase() {
                      lineStyle: { color: axis } },
       backgroundColor: cssVar("--surface"),
       borderColor: cssVar("--hairline"),
-      textStyle: { color: cssVar("--ink"), fontSize: 12 }
+      textStyle: { color: cssVar("--ink"), fontSize: typeAt(12) }
     },
     xAxis: {
       type: "time",
       axisLine: { lineStyle: { color: axis } },
       axisTick: { show: false },
-      axisLabel: { color: muted, fontSize: 11 },
+      axisLabel: { color: muted, fontSize: typeAt(11) },
       splitLine: { show: false }
     },
     yAxis: {
       type: "value",
       axisLine: { show: false },
       axisTick: { show: false },
-      axisLabel: { color: muted, fontSize: 11 },
+      axisLabel: { color: muted, fontSize: typeAt(11) },
       splitLine: { lineStyle: { color: grid } }
     }
   };
@@ -442,18 +456,18 @@ function baseOption() {
                      crossStyle: { color: axis }, lineStyle: { color: axis } },
       backgroundColor: cssVar("--surface"),
       borderColor: cssVar("--hairline"),
-      textStyle: { color: cssVar("--ink"), fontSize: 12 }
+      textStyle: { color: cssVar("--ink"), fontSize: typeAt(12) }
     },
     xAxis: {
       axisLine: { lineStyle: { color: axis } },
       axisTick: { show: false },
-      axisLabel: { color: muted, fontSize: 11 },
+      axisLabel: { color: muted, fontSize: typeAt(11) },
       splitLine: { show: false }
     },
     yAxis: {
       axisLine: { show: false },
       axisTick: { show: false },
-      axisLabel: { color: muted, fontSize: 11 },
+      axisLabel: { color: muted, fontSize: typeAt(11) },
       splitLine: { lineStyle: { color: grid, width: 1 } }
     }
   };

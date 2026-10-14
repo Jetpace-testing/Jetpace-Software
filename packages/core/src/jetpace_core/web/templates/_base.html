@@ -94,12 +94,28 @@
 <div class="app-shell">
 
   <aside class="sidebar">
+    {# The real logo, which carries its own wordmark and tagline - so the
+       design's rotated-square mark, the JETPACE text and the
+       "Test and Measurement" line it stood beside are all gone with it.
+
+       TWO FILES, ONE PER THEME. The tagline is near-black in one and
+       white in the other; the mark is #FA0303 in both. An <img> loads a
+       separate document, so `currentColor` cannot reach inside it and
+       one file cannot recolour itself - the stylesheet shows one and
+       hides the other on data-theme, which is the same mechanism the
+       theme button's own icons use.
+
+       Width and height are set so the sidebar does not reflow between
+       the first paint and the image arriving. The second image is
+       aria-hidden and has an empty alt: it is the same logo, and a
+       screen reader announcing it twice is noise. #}
     <a class="brand" href="/">
-      <div class="brand-mark"><span></span><span></span><span></span><span></span></div>
-      <div>
-        <strong>JETPACE</strong>
-        <small>{{ site_name or 'Test and Measurement' }}</small>
-      </div>
+      <img class="brand-logo on-light" width="182" height="62"
+           src="{{ v('/static/brand/jetpace-on-light.svg') }}"
+           alt="Jetpace Test &amp; Measurement Inc. &mdash; overview">
+      <img class="brand-logo on-dark" width="182" height="62"
+           src="{{ v('/static/brand/jetpace-on-dark.svg') }}"
+           alt="" aria-hidden="true">
     </a>
 
     <!-- section: {% block nav %}{% endblock %} -->

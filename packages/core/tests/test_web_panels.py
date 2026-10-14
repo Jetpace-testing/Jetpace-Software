@@ -611,3 +611,79 @@ def test_chart_text_reads_the_same_ramp():
         text = page.read_text(encoding="utf-8")
         strays = re.findall(r"fontSize:\s*\d+\b", text)
         assert not strays, f"{page.name} sets {strays} outside the ramp"
+
+
+# --- the brand -----------------------------------------------------------
+
+def test_the_logo_files_the_shell_asks_for_are_the_ones_that_exist():
+    """
+    A missing logo renders a broken-image icon in the top-left corner of
+    every page, which is both the most visible possible failure and one
+    no test catches unless it is this one. The frozen build ships
+    `static/` whole, so a file that is here is a file that ships.
+    """
+    import re
+    base = (TEMPLATES / "_base.html").read_text(encoding="utf-8")
+    asked = set(re.findall(r"/static/(brand/[A-Za-z0-9._-]+)", base))
+    assert asked, "the shell no longer references a logo"
+    for name in sorted(asked):
+        assert (A.HERE / "static" / name).is_file(), (
+            f"_base.html asks for {name}, which is not in static/")
+
+
+def test_both_themes_get_a_logo():
+    """
+    An <img> is a separate document, so one file cannot recolour its own
+    tagline - there has to be one per theme, and the stylesheet has to
+    show each of them somewhere. Hiding both is a blank corner.
+    """
+    css = (A.HERE / "static" / "app.css").read_text(encoding="utf-8")
+    for variant in ("on-light", "on-dark"):
+        assert f".brand-logo.{variant} {{ display: block; }}" in css or \
+               f".brand-logo.{variant}  {{ display: block; }}" in css, \
+               f"{variant} is never shown"
+
+
+def test_the_brand_is_not_described_twice_to_a_screen_reader():
+    """
+    Both logos are in the markup at all times and only one is displayed.
+    Two images with the same alt text is the same name announced twice.
+    """
+    base = (TEMPLATES / "_base.html").read_text(encoding="utf-8")
+    block = base.split('<a class="brand"', 1)[1].split("</a>", 1)[0]
+    assert block.count("<img") == 2
+    assert 'alt=""' in block and 'aria-hidden="true"' in block
+
+
+def test_the_logos_are_byte_for_byte_the_pack_they_came_from():
+    """
+    A brand asset that has been resaved, recoloured or re-traced by
+    somebody in a hurry is very hard to spot and very annoying to find on
+    a customer's wall. The README records where each came from; this
+    records what each IS, so a change has to be deliberate.
+    """
+    import hashlib
+    expected = {
+        "jetpace-on-light.svg":
+            "476ad3ab6e0e8df4e0c1f1987d22e207b4a85ddbc1e17788b34eb374637f43e6",
+        "jetpace-on-dark.svg":
+            "f1b139b0bd4b85c126166d5a9e8956bd48043d162e05dab79fd305cdf71471e3",
+    }
+    brand = A.HERE / "static" / "brand"
+    for name, digest in expected.items():
+        actual = hashlib.sha256((brand / name).read_bytes()).hexdigest()
+        assert actual == digest, (
+            f"{name} is not the file the pack supplied. If that is "
+            f"deliberate, update this hash and the README beside it.")
+
+
+def test_the_logo_is_a_vector_and_not_a_picture_of_one():
+    """
+    An SVG wrapping a base64 PNG is the usual way a "vector" logo turns
+    out not to be one - it looks right in review and blurs on a 4K panel.
+    """
+    for svg in (A.HERE / "static" / "brand").glob("*.svg"):
+        text = svg.read_text(encoding="utf-8")
+        assert "base64" not in text and "<image" not in text, (
+            f"{svg.name} embeds a raster")
+        assert "<path" in text

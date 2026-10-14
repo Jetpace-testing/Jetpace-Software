@@ -1,14 +1,15 @@
 {% extends "_base.html" %}
 {% block title %}{{ device.code }} &mdash; Jetpace{% endblock %}
 {% block nav %}devices{% endblock %}
+{% block page_title %}{{ device.code }}{% endblock %}
+{% block page_lede %}{{ device.name }}{% endblock %}
 
 {% block content %}
 <section>
-  <h2>
-    <a class="back" href="/devices">Devices</a>
-    <span class="sep">/</span>{{ device.code }}
-    <span class="hint">{{ device.name }}</span>
-  </h2>
+  {# The code and the name are the page title and its standfirst now, so
+     all this has left to do is point back. Repeating them here put the
+     same two strings on screen twice, ten pixels apart. #}
+  <h2><a class="back" href="/devices">&larr; All devices</a></h2>
 
   <div class="card identity">
     <dl>

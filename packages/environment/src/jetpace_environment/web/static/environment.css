@@ -49,6 +49,9 @@
 .small .head .code { font-size: 11px; color: var(--muted); }
 .small .head .now { margin-left: auto; font-size: 12px; font-weight: 600;
                     font-variant-numeric: tabular-nums; }
-.small .mini { height: 92px; width: 100%; }
-.small .thin { height: 92px; display: flex; align-items: center;
+/* 92px put six y-axis labels into less than a hundred pixels and they
+   ran into each other. The axis is capped at three ticks in the chart
+   options; this gives those three somewhere to sit. */
+.small .mini { height: 124px; width: 100%; }
+.small .thin { height: 124px; display: flex; align-items: center;
                justify-content: center; color: var(--muted); font-size: 12px; }

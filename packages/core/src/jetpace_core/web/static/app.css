@@ -168,18 +168,111 @@ body {
   line-height: 1.5;
 }
 
-.wrap { max-width: 1240px; margin: 0 auto; padding: 20px 20px 64px; }
+/* ---------- the shell: a column down the side, a page beside it -------- */
 
-/* ---------- header ---------- */
+.shell {
+  display: grid;
+  grid-template-columns: 212px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+/* Keyboard users reach the content without tabbing the whole nav first.
+   Off-screen until focused, which is the only time it is of any use. */
+.skip {
+  position: absolute; left: -9999px; top: 0; z-index: 10;
+  background: var(--chrome); color: var(--on-chrome);
+  padding: var(--space-2) var(--space-4); border-radius: 0 0 var(--radius-sm) 0;
+}
+.skip:focus { left: 0; }
+
+.side {
+  position: sticky; top: 0; align-self: start;
+  height: 100vh;
+  display: flex; flex-direction: column;
+  padding: var(--space-5) var(--space-3) var(--space-4);
+  border-right: 1px solid var(--hairline);
+  background: var(--surface);
+}
+.brand {
+  font-size: 17px; font-weight: 700; letter-spacing: -.02em;
+  color: var(--ink); text-decoration: none;
+  padding: 0 var(--space-3) var(--space-5);
+}
+
+.side .nav { display: flex; flex-direction: column; gap: 1px; }
+.side .nav a {
+  display: block;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: 13.5px;
+  color: var(--ink-2);
+  text-decoration: none;
+}
+.side .nav a:hover { background: var(--plane); color: var(--ink); }
+/* The current page is the one place chrome is allowed to fill an area.
+   A tint rather than a solid block: the page beside it is the thing
+   being read. */
+.side .nav a.current {
+  background: var(--chrome-tint);
+  color: var(--chrome);
+  font-weight: 600;
+}
+.side .nav a:focus-visible { outline: 2px solid var(--chrome); outline-offset: -2px; }
+
+.side-foot {
+  margin-top: auto; display: flex; flex-direction: column; gap: 2px;
+  padding: var(--space-4) var(--space-3) 0;
+  border-top: 1px solid var(--hairline);
+  font-size: 12px;
+}
+.side-foot .site { color: var(--ink-2); }
+
+/* ---------- the page ---------- */
+
+.main {
+  min-width: 0;                     /* or a wide table stretches the grid */
+  /* Bounded, and centred in what is left beside the column. On a 1920
+     screen an unbounded page spreads a four-column table across seventeen
+     hundred pixels, which reads as emptiness rather than as generosity -
+     and the eye has to travel the whole width to join a device code to
+     its reading. */
+  width: 100%;
+  max-width: 1360px;
+  margin-inline: auto;
+  padding: var(--space-5) var(--space-6) 64px;
+}
 
 header.top {
-  display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap;
-  padding-bottom: 14px; border-bottom: 1px solid var(--hairline);
+  display: flex; align-items: flex-start; gap: var(--space-4);
+  margin-bottom: var(--space-5);
 }
-header.top h1 { font-size: 19px; font-weight: 650; margin: 0; letter-spacing: -.01em; }
-header.top .site { color: var(--ink-2); }
+header.top .titles { min-width: 0; }
+header.top h1 {
+  font-size: 28px; font-weight: 700; margin: 0; letter-spacing: -.025em;
+}
+header.top .lede { margin: var(--space-2) 0 0; }
 header.top .clock { margin-left: auto; color: var(--muted); font-size: 12.5px;
-                    font-variant-numeric: tabular-nums; }
+                    font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Below this the side column stops being a column. A narrow window is a
+   laptop with a browser beside something else, not a phone, so the nav
+   lies down rather than hiding behind a button nobody finds. */
+@media (max-width: 880px) {
+  .shell { grid-template-columns: minmax(0, 1fr); }
+  .side {
+    position: static; height: auto; flex-direction: row; flex-wrap: wrap;
+    align-items: center; gap: var(--space-3);
+    border-right: 0; border-bottom: 1px solid var(--hairline);
+    padding: var(--space-3) var(--space-4);
+  }
+  .brand { padding: 0; }
+  .side .nav { flex-direction: row; flex-wrap: wrap; gap: var(--space-1); }
+  .side-foot {
+    margin: 0 0 0 auto; flex-direction: row; gap: var(--space-3);
+    border-top: 0; padding: 0;
+  }
+  .main { padding: var(--space-4) var(--space-4) 48px; }
+}
 
 /* ---------- summary tiles ---------- */
 
@@ -239,25 +332,11 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 td.code { font-weight: 600; }
 td.dim { color: var(--muted); }
 
-/* ---------- status pills: colour plus icon plus label, never colour alone ---- */
-
-.pill { display: inline-flex; align-items: center; gap: 5px;
-        font-size: 11.5px; font-weight: 600; white-space: nowrap; }
-.pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%;
-                background: currentColor; flex: none; }
-.pill.good     { color: var(--good-ink); }
-.pill.warning  { color: #8a5d00; }
-.pill.serious  { color: #9c4a24; }
-.pill.critical { color: var(--critical); }
-.pill.offline  { color: var(--muted); }
-.pill.offline::before { background: none; box-shadow: inset 0 0 0 1.5px currentColor; }
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .pill.warning { color: var(--warning); }
-  :root:not([data-theme="light"]) .pill.serious { color: var(--serious); }
-}
-:root[data-theme="dark"] .pill.warning { color: var(--warning); }
-:root[data-theme="dark"] .pill.serious { color: var(--serious); }
+/* The status pills were defined TWICE in this file, once here as a dot
+   and a word, and again further down as a tinted block. The second won
+   on layout while this one's ::before kept drawing its dot, so every
+   pill was half of each - two eras of the stylesheet arguing. They are
+   now one definition, below, under "status pills". */
 
 .status-text { font-size: 11px; color: var(--muted); }
 
@@ -275,8 +354,9 @@ td.dim { color: var(--muted); }
 
 button.toggle {
   margin-left: auto; font: inherit; font-size: 12px; color: var(--ink-2);
-  background: none; border: 1px solid var(--hairline); border-radius: 4px;
-  padding: 3px 9px; cursor: pointer;
+  background: none; border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
+  padding: 4px var(--space-3); cursor: pointer;
 }
 button.toggle:hover { border-color: var(--axis); }
 button.toggle:focus-visible { outline: 2px solid var(--chrome); outline-offset: 1px; }
@@ -305,31 +385,10 @@ footer.foot { margin-top: 28px; padding-top: 14px; border-top: 1px solid var(--h
  * home.
  * ======================================================================== */
 
-.top h1 a { color: inherit; text-decoration: none; }
-
-nav.nav {
-  display: flex;
-  gap: 2px;
-  margin: 0 0 22px;
-  border-bottom: 1px solid var(--hairline);
-}
-nav.nav a {
-  padding: 8px 14px;
-  font-size: 13px;
-  color: var(--muted);
-  text-decoration: none;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-}
-nav.nav a:hover { color: var(--ink); }
-nav.nav a.current {
-  color: var(--ink);
-  border-bottom-color: var(--chrome);
-}
-nav.nav a:focus-visible {
-  outline: 2px solid var(--chrome);
-  outline-offset: -2px;
-}
+/* The horizontal nav that used to live here is gone; the navigation is a
+   column in .side above. Its rules were a tab strip - bottom borders and
+   a negative margin to sit on the header's hairline - and none of that
+   survives the move, so they are deleted rather than left to rot. */
 
 h2 .back { color: var(--muted); text-decoration: none; font-weight: inherit; }
 h2 .back:hover { color: var(--ink); }
@@ -350,11 +409,11 @@ h2 .sep { color: var(--axis); margin: 0 6px; font-weight: 400; }
 button.chip {
   font: inherit;
   font-size: 12px;
-  padding: 5px 11px;
+  padding: 5px var(--space-3);
   color: var(--muted);
   background: transparent;
   border: 1px solid var(--hairline);
-  border-radius: 3px;
+  border-radius: var(--radius-pill);
   cursor: pointer;
 }
 button.chip:hover { color: var(--ink); border-color: var(--axis); }
@@ -414,24 +473,49 @@ a.code {
 a.code:hover { border-bottom-color: var(--chrome); }
 
 /* --- status pills -------------------------------------------------------
- * Every pill carries its word. Colour is the second encoding, never the
- * only one - which matters for the eight percent of men who would
- * otherwise see two identical grey dots.
+ * Three encodings, not one: the word, the tint, and the dot. Colour is
+ * never the only one - which matters for the eight percent of men who
+ * would otherwise see two identical grey ovals, and for the printed copy
+ * that ends up in a batch record.
+ *
+ * The dot earns its keep beyond accessibility: in a table of four hundred
+ * meters the state has to be scannable without reading, and a shape at
+ * the start of the pill does that where a tint alone does not.
  * --------------------------------------------------------------------- */
 
 .pill {
-  display: inline-block;
+  display: inline-flex; align-items: center; gap: 5px;
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: .03em;
-  padding: 2px 7px;
-  border-radius: 2px;
+  padding: 3px var(--space-2);
+  border-radius: var(--radius-pill);
   white-space: nowrap;
+}
+.pill::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor; flex: none;
 }
 .pill.good     { color: var(--good-ink);  background: color-mix(in srgb, var(--good) 14%, transparent); }
 .pill.warning  { color: var(--warning);   background: color-mix(in srgb, var(--warning) 18%, transparent); }
 .pill.serious  { color: var(--serious);   background: color-mix(in srgb, var(--serious) 18%, transparent); }
 .pill.critical { color: var(--critical);  background: color-mix(in srgb, var(--critical) 14%, transparent); }
+/* Not a state so much as the absence of one, so it is drawn hollow: a
+   ring rather than a filled dot, and no tint behind it. */
+.pill.offline  { color: var(--muted);     background: var(--plane); }
+.pill.offline::before { background: none; box-shadow: inset 0 0 0 1.5px currentColor; }
+
+/* --warning and --serious are tuned for a dark surface; on white they are
+   too light to read as text, so the light theme darkens the ink while
+   keeping the tint from the token. */
+.pill.warning  { color: #8a5d00; }
+.pill.serious  { color: #9c4a24; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .pill.warning { color: var(--warning); }
+  :root:not([data-theme="light"]) .pill.serious { color: var(--serious); }
+}
+:root[data-theme="dark"] .pill.warning { color: var(--warning); }
+:root[data-theme="dark"] .pill.serious { color: var(--serious); }
 
 /* --- the page footer ---------------------------------------------------- */
 
@@ -448,6 +532,5 @@ footer.foot {
 }
 
 @media (max-width: 640px) {
-  nav.nav { overflow-x: auto; }
   .controls { gap: 10px; }
 }

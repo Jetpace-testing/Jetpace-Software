@@ -1,14 +1,12 @@
 {% extends "_base.html" %}
 {% block title %}Energy &mdash; Jetpace{% endblock %}
 {% block nav %}energy{% endblock %}
+{% block page_title %}Energy{% endblock %}
+{% block page_lede %}Electrical energy. Consumption is the last reading of a
+period minus the first — never the highest — and a figure the system cannot
+defend is left blank with a status rather than guessed at.{% endblock %}
 
 {% block content %}
-  <p class="lede">
-    Electrical energy. Consumption is the last reading of a period minus
-    the first &mdash; never the highest &mdash; and a figure the system
-    cannot defend is left blank with a status rather than guessed at.
-  </p>
-
   <!-- ================= energy ================= -->
   <section>
     <h2>Energy

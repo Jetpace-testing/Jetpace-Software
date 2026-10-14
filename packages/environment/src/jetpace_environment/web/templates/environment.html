@@ -1,14 +1,12 @@
 {% extends "_base.html" %}
 {% block title %}Environment &mdash; Jetpace{% endblock %}
 {% block nav %}environment{% endblock %}
+{% block page_title %}Environment{% endblock %}
+{% block page_lede %}Cleanroom and differential pressure. A cascade is healthy
+positive; below zero the airflow has reversed and the room is no longer
+protected.{% endblock %}
 
 {% block content %}
-  <p class="lede">
-    Cleanroom and differential pressure. A cascade is healthy positive;
-    below zero the airflow has reversed and the room is no longer
-    protected.
-  </p>
-
   <dl class="tiles">
     <div class="tile {{ 'good' if (summary.rooms_in_spec or 0) == (summary.rooms_total or 0) else 'alarm' }}">
       <dt>Rooms in spec</dt>
@@ -156,6 +154,11 @@ ready(function () {
           },
           yAxis: {
             type: "value", min: lo, max: hi,
+            // Three, not "as many as fit". ECharts was drawing six into
+            // a chart a hundred pixels tall and they collided; a room's
+            // chart is read for its shape and its current value, and the
+            // exact gridline count is not what anyone is looking for.
+            splitNumber: 3,
             axisLine: { show: false }, axisTick: { show: false },
             axisLabel: { color: muted, fontSize: 10 },
             splitLine: { lineStyle: { color: grid } }

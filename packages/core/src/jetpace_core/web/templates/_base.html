@@ -30,43 +30,74 @@
 <script src="/static/vendor/echarts.min.js" defer></script>
 </head>
 <body>
-<div class="wrap">
+<a class="skip" href="#main">Skip to content</a>
+<div class="shell">
 
-  <header class="top">
-    <h1><a href="/">Jetpace</a></h1>
-    <span class="site">{{ site_name or 'Prototype site' }}</span>
-    <span class="clock" id="clock"></span>
-  </header>
+  {# The navigation moved from a strip across the top to a column down the
+     side. Four items fitted across the top; alarms, reports, settings and
+     users will not, and a nav that has to scroll sideways is a nav nobody
+     reads. #}
+  <aside class="side">
+    <a class="brand" href="/">Jetpace</a>
 
-  {# The block has to be DEFINED here for a child to override it, and
-     wherever it is defined it renders. Inside a comment, so reading it
-     with self.nav() below costs nothing visible - and the comment is
-     worth having anyway when someone views source to ask which page they
-     are on. #}
-  <!-- section: {% block nav %}{% endblock %} -->
-  <nav class="nav" aria-label="Sections">
-    {% set here = self.nav() | trim %}
-    <a href="/"        class="{{ 'current' if here == 'overview' }}">Overview</a>
-    <a href="/devices" class="{{ 'current' if here == 'devices' }}">Devices</a>
-    {# The products this install actually serves, in the order core loaded
-       them. These were two literal links, Environment and Energy, which
-       meant a customer who had bought one had a tab for the other that
-       led to a 404 - and the shell naming a product was the coupling §3
-       exists to remove. A page says which tab it is with
-       `{% block nav %}<slug>{% endblock %}`, matched here against the
-       slug, so nothing has to be kept in step by hand. #}
-    {% for p in products or [] %}
-      <a href="/{{ p.slug }}"
-         class="{{ 'current' if here == p.slug }}">{{ p.label }}</a>
-    {% endfor %}
-  </nav>
+    {# The block has to be DEFINED here for a child to override it, and
+       wherever it is defined it renders. Inside a comment, so reading it
+       with self.nav() below costs nothing visible - and the comment is
+       worth having anyway when someone views source to ask which page they
+       are on. #}
+    <!-- section: {% block nav %}{% endblock %} -->
+    <nav class="nav" aria-label="Sections">
+      {% set here = self.nav() | trim %}
+      {# No group heading. The reference this is modelled on has two -
+         MENU and GENERAL - because it has two groups; we have one, and a
+         heading over a single group is decoration. The second group
+         arrives with the first page that belongs in it, and not before:
+         shipping a Settings link to a page that does not exist is the
+         same mistake as the Energy tab a cleanroom customer could not
+         use. #}
+      <a href="/"        class="{{ 'current' if here == 'overview' }}">Overview</a>
+      <a href="/devices" class="{{ 'current' if here == 'devices' }}">Devices</a>
+      {# The products this install actually serves, in the order core loaded
+         them. These were two literal links, Environment and Energy, which
+         meant a customer who had bought one had a tab for the other that
+         led to a 404 - and the shell naming a product was the coupling §3
+         exists to remove. A page says which tab it is with
+         `{% block nav %}<slug>{% endblock %}`, matched here against the
+         slug, so nothing has to be kept in step by hand. #}
+      {% for p in products or [] %}
+        <a href="/{{ p.slug }}"
+           class="{{ 'current' if here == p.slug }}">{{ p.label }}</a>
+      {% endfor %}
+    </nav>
 
-  {% block content %}{% endblock %}
+    <div class="side-foot">
+      <span class="site">{{ site_name or 'Prototype site' }}</span>
+      <span class="dim">{{ version or '' }}</span>
+    </div>
+  </aside>
 
-  <footer class="foot">
-    <span>{{ version or '' }}</span>
-    <span>Readings are stored in UTC and shown in {{ timezone or 'Asia/Kolkata' }}.</span>
-  </footer>
+  <main class="main" id="main">
+
+    {# A page says what it is here rather than inside its own content, so
+       every screen opens the same way and the heading levels stay honest:
+       one h1 per page, and the section h2s below it mean what they say. #}
+    <!-- lede: {% block page_lede %}{% endblock %} -->
+    <header class="top">
+      <div class="titles">
+        <h1>{% block page_title %}{% endblock %}</h1>
+        {% set lede = self.page_lede() | trim %}
+        {% if lede %}<p class="lede">{{ lede }}</p>{% endif %}
+      </div>
+      <span class="clock" id="clock"></span>
+    </header>
+
+    {% block content %}{% endblock %}
+
+    <footer class="foot">
+      <span>Readings are stored in UTC and shown in {{ timezone or 'Asia/Kolkata' }}.</span>
+    </footer>
+
+  </main>
 
 </div>
 

@@ -52,7 +52,11 @@
         {% for d in devices %}
           {% set first = d.points | first %}
           <tr>
-            <td class="code"><a href="/devices/{{ d.code }}">{{ d.code }}</a></td>
+            {# The class belongs on the ANCHOR, as it does in
+               _devices.html. On the cell it styled the cell and left the
+               link to the browser, so the same device code was ours on
+               /devices and default-browser-blue here. #}
+            <td><a class="code" href="/devices/{{ d.code }}">{{ d.code }}</a></td>
             <td>{{ d.name }}</td>
             <td class="dim">{{ d.gateway }}</td>
             <td class="num dim">{{ d.unit_id }}</td>

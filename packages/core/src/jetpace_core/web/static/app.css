@@ -168,6 +168,33 @@ body {
   line-height: 1.5;
 }
 
+/* EVERY link, including the ones nobody got round to styling.
+ *
+ * There was no `a` rule in this file at all, so any anchor without its
+ * own class fell through to the browser's defaults - #9e9eff underlined
+ * in dark mode, 1996 blue in light. The device codes on the overview
+ * were rendering exactly that way in production, beside a table that was
+ * otherwise entirely ours.
+ *
+ * Links are INK with an underline, not a colour. The underline carries
+ * the affordance, which keeps the rule that colour means data or state,
+ * and it sidesteps a real problem: --chrome on the dark surface measures
+ * 3.15:1, fine for a filled button and below the 4.5 bar for text. An
+ * ink link passes in both themes by construction. */
+a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--axis);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+a:hover { text-decoration-color: var(--chrome); }
+a:focus-visible {
+  outline: 2px solid var(--chrome);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
 /* ---------- the shell: a column down the side, a page beside it -------- */
 
 .shell {
@@ -464,13 +491,11 @@ button.chip:focus-visible {
 
 /* --- the device table --------------------------------------------------- */
 
-a.code {
-  font-variant-numeric: tabular-nums;
-  color: var(--ink);
-  text-decoration: none;
-  border-bottom: 1px solid var(--axis);
-}
-a.code:hover { border-bottom-color: var(--chrome); }
+/* A device code is a link and reads as one through the baseline rule
+   above. It used to draw its own underline with a border-bottom, which
+   was a second mechanism doing the same job - and now that `a` has a
+   real rule, it would have drawn both. */
+a.code { font-variant-numeric: tabular-nums; font-weight: 600; }
 
 /* --- status pills -------------------------------------------------------
  * Three encodings, not one: the word, the tint, and the dot. Colour is

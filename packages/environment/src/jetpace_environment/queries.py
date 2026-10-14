@@ -32,6 +32,11 @@ WITH dp AS (
 SELECT
     (SELECT count(*) FROM dp)                                     AS rooms_total,
     (SELECT count(*) FROM dp WHERE value > 0)                     AS rooms_in_spec,
+    -- The average of the CURRENT reading in each room, not of every
+    -- reading taken: the question is what the cascade is doing now, and
+    -- averaging a day of history would bury an excursion that started an
+    -- hour ago.
+    (SELECT round(avg(value)::numeric, 1) FROM dp)                AS avg_dp,
     -- Each raw reading stands for one minute, so counting rows IS a
     -- duration. True only while every pressure point shares a 1-minute
     -- scan class; see the note on EXCURSIONS below.

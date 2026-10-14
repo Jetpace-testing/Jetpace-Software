@@ -38,6 +38,7 @@ import tomllib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter
 from fastapi.templating import Jinja2Templates
@@ -72,6 +73,35 @@ class Shell:
 
 
 @dataclass(frozen=True)
+class Tile:
+    """
+    One figure on the overview, contributed by a product.
+
+    The VALUE ARRIVES FORMATTED. A product knows that a differential
+    pressure is one decimal place and reads in pascals, and that a meter
+    reading is kWh with thousands separators; the shell does not and must
+    not have to be told. Handing core a float and a format string would
+    put the product's units back into the shared layer by the back door.
+
+    `state` is "", "good" or "alarm", which the shell maps onto the same
+    tile classes its own figures use - so a product's tile cannot invent
+    a colour, and a cleanroom in spec is drawn exactly like any other
+    healthy figure on the page.
+    """
+
+    label: str
+    value: str
+    small: str = ""
+    state: str = ""
+
+    def __post_init__(self) -> None:
+        if self.state not in ("", "good", "alarm"):
+            raise ValueError(
+                f"tile {self.label!r} has state {self.state!r}; the shell "
+                f"knows '', 'good' and 'alarm' and nothing else.")
+
+
+@dataclass(frozen=True)
 class Product:
     """One product's contribution to the application."""
 
@@ -98,6 +128,14 @@ class Product:
     # product's CSS.
     static: Path | None = None
     stylesheet: str | None = None
+
+    # Optional: figures this product adds to the shared overview, given an
+    # open connection. The overview is otherwise true of any product -
+    # devices, how many are answering, how much has arrived - which is
+    # correct and thin. A customer who bought one product wants their own
+    # numbers on the first screen, and this is how they get there without
+    # core learning what a room is.
+    tiles: Callable[[Any], list[Tile]] | None = None
 
     def __post_init__(self) -> None:
         if not self.slug.isascii() or not self.slug.isalpha():

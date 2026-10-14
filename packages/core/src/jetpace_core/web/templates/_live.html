@@ -5,10 +5,16 @@
    excursion minutes moved to /environment: they are meaningless to a
    customer who bought the energy product, and showing them a permanent
    "0 of 0" is worse than not showing them. #}
+{# The shell's own figures: true of any product, on every install. #}
 <dl class="tiles">
   <div class="tile">
     <dt>Devices online</dt>
     <dd>{{ summary.online or 0 }} <small>of {{ summary.devices or 0 }}</small></dd>
+  </div>
+  {% set offline = (summary.devices or 0) - (summary.online or 0) %}
+  <div class="tile{{ ' alarm' if offline }}">
+    <dt>Silent</dt>
+    <dd>{{ offline }}</dd>
   </div>
   <div class="tile">
     <dt>Points reporting</dt>
@@ -24,6 +30,26 @@
         {% else %}<span class="dim">none</span>{% endif %}</dd>
   </div>
 </dl>
+
+{# And then whatever the products on this install contribute. An
+   environment customer gets rooms in spec and pressure here; an energy
+   customer gets consumption. The shell does not know which it is
+   rendering - the value arrives already formatted, because the product
+   is what knows that a pressure is pascals to one decimal place.
+
+   A separate row rather than one long one: these answer a different
+   question from the figures above, and mixing them makes a seven-across
+   grid where nothing has priority. #}
+{% if product_tiles %}
+  <dl class="tiles product">
+    {% for t in product_tiles %}
+      <div class="tile{{ ' ' ~ t.state if t.state }}">
+        <dt>{{ t.label }}</dt>
+        <dd>{{ t.value }}{% if t.small %} <small>{{ t.small }}</small>{% endif %}</dd>
+      </div>
+    {% endfor %}
+  </dl>
+{% endif %}
 
 <section>
   <h2>Live

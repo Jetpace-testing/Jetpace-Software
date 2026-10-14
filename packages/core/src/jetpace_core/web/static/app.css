@@ -341,6 +341,13 @@ header.top .clock { color: var(--muted); font-size: 12.5px;
 .tile { background: var(--surface); border: 1px solid var(--hairline);
         border-radius: var(--radius-sm);
         padding: var(--space-3) var(--space-4); }
+
+/* The product's own figures, in a second row directly under the shell's.
+   The negative margin exactly cancels the first row's bottom margin, so
+   the two read as one block with a seam rather than two unrelated bands -
+   and a single long row would make a seven-across grid in which nothing
+   has priority. An install with no products never renders this at all. */
+.tiles.product { margin-top: calc(var(--space-5) * -1); }
 .tile dt { font-size: 11px; font-weight: 600; letter-spacing: .07em;
            text-transform: uppercase; color: var(--muted); margin: 0 0 4px; }
 .tile dd { margin: 0; font-size: 25px; font-weight: 600; letter-spacing: -.02em; }

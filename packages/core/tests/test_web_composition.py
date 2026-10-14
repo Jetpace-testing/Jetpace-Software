@@ -379,3 +379,88 @@ def test_the_theme_script_survives_blocked_storage(tmp_path):
     theme = [s for s in scripts if "jetpace-theme" in s]
     assert theme, "no inline script in the head reads the stored theme"
     assert "try" in theme[0] and "catch" in theme[0]
+
+
+# --- product tiles on the shared overview ---------------------------------
+#
+# The overview is the shell's, and true of any product. A customer who
+# bought one product still wants their own numbers on the first screen,
+# so products contribute tiles through the same seam that carries their
+# routes and templates - and core still never learns what a room is.
+
+def tiled_product(tmp_path, tiles):
+    product = fake_product(tmp_path)
+    return P.Product(slug=product.slug, label=product.label,
+                     templates=product.templates, static=product.static,
+                     stylesheet=product.stylesheet, routes=product.routes,
+                     tiles=tiles)
+
+
+def test_a_products_tiles_reach_the_overview(tmp_path, monkeypatch):
+    called = {}
+
+    def tiles(conn):
+        called["conn"] = conn
+        return [P.Tile(label="Rooms in spec", value="6", small="of 6",
+                       state="good")]
+
+    app = create_app(DSN, [tiled_product(tmp_path, tiles)])
+    _stub_db(monkeypatch)
+    body = TestClient(app).get("/").text
+    assert "Rooms in spec" in body
+    assert ">6<" in body or "6 <small>of 6</small>" in body
+    assert called, "the tile callable was never given a connection"
+
+
+def test_the_shell_renders_no_product_row_when_there_are_none(tmp_path,
+                                                              monkeypatch):
+    app = create_app(DSN, [fake_product(tmp_path)])      # no tiles callable
+    _stub_db(monkeypatch)
+    body = TestClient(app).get("/").text
+    assert 'class="tiles product"' not in body
+
+
+def test_one_products_broken_tiles_do_not_blank_the_page(tmp_path,
+                                                         monkeypatch):
+    """
+    A failing product query must not take the first screen with it - and
+    must not vanish silently either, or a site runs for a week with a
+    figure missing and nobody wonders why.
+    """
+    def explode(conn):
+        raise RuntimeError("the rollup is not there")
+
+    app = create_app(DSN, [tiled_product(tmp_path, explode)])
+    _stub_db(monkeypatch)
+    response = TestClient(app).get("/")
+    assert response.status_code == 200
+    assert "Devices online" in response.text      # the shell is intact
+    assert "unavailable" in response.text         # and the gap is visible
+
+
+@pytest.mark.parametrize("state", ["", "good", "alarm"])
+def test_a_tile_may_only_use_states_the_shell_knows(state):
+    P.Tile(label="x", value="1", state=state)     # these are fine
+
+
+def test_a_tile_cannot_invent_a_colour():
+    """
+    Otherwise a product introduces its own status vocabulary and the
+    shell's reserved four stop meaning anything.
+    """
+    with pytest.raises(ValueError, match="state"):
+        P.Tile(label="x", value="1", state="exploded")
+
+
+def _stub_db(monkeypatch):
+    """The overview needs a connection; none of these tests need a database."""
+    class _Conn:
+        def __enter__(self): return self
+        def __exit__(self, *exc): return False
+
+    from jetpace_core.web import queries as q
+    monkeypatch.setattr(q, "connect", lambda dsn: _Conn())
+    monkeypatch.setattr(q, "summary", lambda conn: {
+        "devices": 8, "online": 3, "online_points": 6,
+        "readings_24h": 1234, "newest": None})
+    monkeypatch.setattr(q, "live", lambda conn: [])

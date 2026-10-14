@@ -205,6 +205,33 @@ def create_app(dsn: str,
 
     templates.env.globals["asset"] = asset
 
+    def product_tiles(conn) -> list[dict]:
+        """
+        Each loaded product's own figures for the overview.
+
+        ISOLATED PER PRODUCT. One product's query failing must not blank
+        the whole first screen - but it must not vanish quietly either,
+        or a site runs for a week with a tile missing and nobody wonders
+        why. A product that raises gets a tile saying so, in its own
+        place, and the rest of the page is unaffected.
+        """
+        collected: list[dict] = []
+        for product in products:
+            if product.tiles is None:
+                continue
+            try:
+                found = product.tiles(conn)
+            except Exception as exc:                   # noqa: BLE001
+                print(f"  {product.slug} tiles failed: {exc}", flush=True)
+                collected.append({"label": product.label, "state": "alarm",
+                                  "value": "unavailable", "small": ""})
+                continue
+            collected.extend(
+                {"label": t.label, "value": t.value,
+                 "small": t.small, "state": t.state}
+                for t in found)
+        return collected
+
     def rows_for_live(conn):
         """Group the flat live query into one entry per device."""
         by_device: dict[str, dict] = {}
@@ -236,6 +263,7 @@ def create_app(dsn: str,
             return templates.TemplateResponse(request, "index.html", {
                 "summary": queries.summary(conn),
                 "devices": rows_for_live(conn),
+                "product_tiles": product_tiles(conn),
             })
 
     # The product views used to be four routes here - /environment,
@@ -251,6 +279,7 @@ def create_app(dsn: str,
             return templates.TemplateResponse(request, "_live.html", {
                 "summary": queries.summary(conn),
                 "devices": rows_for_live(conn),
+                "product_tiles": product_tiles(conn),
             })
 
     # --- the device list and one device --------------------------------

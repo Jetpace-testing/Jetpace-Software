@@ -19,7 +19,7 @@ from pathlib import Path
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from jetpace_core.web import queries as core_queries
-from jetpace_core.web.products import Product, Shell
+from jetpace_core.web.products import Product, Shell, Tile
 
 from .. import queries
 
@@ -76,6 +76,39 @@ def routes(shell: Shell) -> APIRouter:
     return router
 
 
+def tiles(conn) -> list[Tile]:
+    """
+    What this product adds to the shared overview.
+
+    The shell's figures answer "is the system working". These answer "is
+    the facility in control", which is the question a cleanroom customer
+    opens the page for - and which the shell cannot ask, because asking
+    it requires knowing what a room is.
+
+    Values are formatted here. Pascals to one decimal place is this
+    product's knowledge, not the shell's.
+    """
+    summary = queries.environment_summary(conn)
+    total = summary.get("rooms_total") or 0
+    in_spec = summary.get("rooms_in_spec") or 0
+    excursions = summary.get("excursions_24h") or 0
+    average = summary.get("avg_dp")
+
+    return [
+        Tile(label="Rooms in spec",
+             value=str(in_spec),
+             small=f"of {total}",
+             # No rooms is not a failure, it is an uncommissioned site.
+             state="" if not total else ("good" if in_spec == total else "alarm")),
+        Tile(label="Excursion minutes, 24 h",
+             value=f"{excursions:,}",
+             state="alarm" if excursions else ("good" if total else "")),
+        Tile(label="Average pressure",
+             value="—" if average is None else f"{float(average):,.1f}",
+             small="" if average is None else "Pa"),
+    ]
+
+
 def product() -> Product:
     return Product(
         slug="environment",
@@ -84,4 +117,5 @@ def product() -> Product:
         static=HERE / "static",
         stylesheet="environment.css",
         routes=routes,
+        tiles=tiles,
     )

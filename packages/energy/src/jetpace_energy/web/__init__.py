@@ -20,7 +20,7 @@ from pathlib import Path
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from jetpace_core.web import queries as core_queries
-from jetpace_core.web.products import Product, Shell
+from jetpace_core.web.products import Product, Shell, Tile
 
 from .. import queries
 
@@ -54,10 +54,39 @@ def routes(shell: Shell) -> APIRouter:
     return router
 
 
+def tiles(conn) -> list[Tile]:
+    """
+    What this product adds to the shared overview.
+
+    Both figures come through consumption(), so a meter whose period the
+    system cannot defend is counted as such rather than quietly summed
+    into the total - architecture.md §7. A tile that adds up numbers it
+    does not trust is worse than no tile.
+    """
+    rows = queries.energy_period(conn, days=7)
+    defensible = [r for r in rows if r.get("status") == "ok"]
+    total = sum(float(r["used"] or 0) for r in defensible)
+    top = max(defensible, key=lambda r: float(r["used"] or 0), default=None)
+
+    return [
+        Tile(label="Consumption, 7 days",
+             value=f"{total:,.0f}" if defensible else "—",
+             small="kWh" if defensible else "",
+             # Anything the system would not stand behind is the thing to
+             # say out loud, not to average away.
+             state="" if not rows else
+                   ("good" if len(defensible) == len(rows) else "alarm")),
+        Tile(label="Highest consumer",
+             value=top["code"] if top else "—",
+             small=f"{float(top['used'] or 0):,.0f} kWh" if top else ""),
+    ]
+
+
 def product() -> Product:
     return Product(
         slug="energy",
         label="Energy",
         templates=HERE / "templates",
         routes=routes,
+        tiles=tiles,
     )

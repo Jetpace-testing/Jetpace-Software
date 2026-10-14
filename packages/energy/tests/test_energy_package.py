@@ -58,3 +58,34 @@ def test_the_product_declares_no_stylesheet():
     p = product()
     assert p.stylesheet is None
     assert p.static is None
+
+
+# --- the exceptions this product contributes ------------------------------
+
+def test_the_product_contributes_the_periods_it_cannot_defend():
+    """
+    architecture.md §7: a figure the system cannot defend comes back with
+    a status rather than a plausible guess. consumption() already decides
+    that; this surfaces the decision where somebody who has to fix a
+    meter before the month closes will see it.
+    """
+    from jetpace_energy.web import product
+
+    assert product().events is not None
+
+
+def test_every_undefendable_status_has_a_sentence():
+    """
+    An operator reading "counter_reset" learns nothing. Each status
+    consumption() can return needs words, and those words are this
+    product's - the shell has no business knowing what a counter reset
+    is.
+    """
+    from jetpace_energy.web import DEFENSIBLE, WHY
+
+    # The statuses in migrations/0003_consumption_guard.sql, less the
+    # one that means the figure is fine.
+    for status in ("counter_reset", "partial_new_meter", "stale_open",
+                   "not_a_counter"):
+        assert status in WHY, f"{status} would be shown raw to an operator"
+    assert DEFENSIBLE not in WHY

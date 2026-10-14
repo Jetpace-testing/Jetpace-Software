@@ -1,0 +1,86 @@
+{# The distribution panel - the design's "Device Distribution".
+
+   THE DESIGN'S DONUT has four slices: online, offline, with warnings,
+   with alarms. The first two are real here. The last two need an alarm
+   model, and there is none in this schema (architecture.md §10), so this
+   donut is about connectivity only - which is what its subtitle in the
+   design says first.
+
+   THREE SLICES, NOT TWO. A device that has never reported at all is a
+   different situation from one that reported this morning and stopped:
+   the first is a commissioning fault and the second a fault in the
+   field, and merging them sends the operator to the wrong place.
+
+   The gradient stops come from the same query as the list, written into
+   the element as custom properties, so the ring cannot drift from the
+   numbers beside it. A conic gradient says nothing to a screen reader
+   and nothing to a colourblind reader, so the ring is marked
+   presentational and every slice is named, counted and given its
+   percentage in the list - which is the real content. #}
+
+{% import "_icons.html" as ico %}
+
+{% set total  = distribution.devices or 0 %}
+{% set online = distribution.online or 0 %}
+{% set silent = distribution.silent or 0 %}
+{% set never  = distribution.never_seen or 0 %}
+
+<div class="panel-heading compact">
+  <div>
+    <h2>Device Distribution</h2>
+    <p>Connectivity across this installation</p>
+  </div>
+  <a class="text-button" href="/devices">View details</a>
+</div>
+
+{% if total %}
+  {% set p_online = 100 * online / total %}
+  {% set p_silent = 100 * silent / total %}
+  <div class="donut-wrap">
+    <div class="donut" aria-hidden="true"
+         style="--stop-1: {{ '%.3f' | format(p_online) }}%;
+                --stop-2: {{ '%.3f' | format(p_online + p_silent) }}%">
+      <div>
+        <strong>{{ total }}</strong>
+        <span>Total devices</span>
+      </div>
+    </div>
+
+    <div class="distribution-list">
+      <div>
+        <span><i class="normal"></i>Online</span>
+        <b>{{ online }} <small>{{ '%.1f' | format(p_online) }}%</small></b>
+      </div>
+      <div>
+        <span><i class="offline"></i>Silent</span>
+        <b>{{ silent }} <small>{{ '%.1f' | format(p_silent) }}%</small></b>
+      </div>
+      <div>
+        <span><i class="warning"></i>Never reported</span>
+        <b>{{ never }} <small>{{ '%.1f' | format(100 * never / total) }}%</small></b>
+      </div>
+      {# The design separates connectivity from health below a dashed
+         rule. Health here is the gateways: a whole bus that has gone
+         quiet is one fault, not twenty, and it is the first thing to
+         look at when the silent count jumps. #}
+      <div class="separate">
+        <span>{{ ico.icon('building', 13) }}Gateways reporting</span>
+        <b>{{ distribution.gateways_live or 0 }}
+           <small>of {{ distribution.gateways or 0 }}</small></b>
+      </div>
+    </div>
+  </div>
+
+  <p class="panel-note">
+    Silent means nothing has arrived for longer than the offline
+    threshold; never reported means nothing ever has. Health exceptions
+    are listed below rather than counted here &mdash; this install has no
+    alarm model, so there is no count of alarms to give.
+  </p>
+{% else %}
+  <div class="empty-state">
+    {{ ico.icon('device', 24) }}
+    <strong>No devices commissioned</strong>
+    <span>Nothing to distribute yet.</span>
+  </div>
+{% endif %}

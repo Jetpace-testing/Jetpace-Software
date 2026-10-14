@@ -1,0 +1,65 @@
+{# The add-device modal.
+
+   THE DESIGN'S IS A FORM: device ID, device name, location, and an "Add
+   Device" button. There is no write path in this application at all -
+   queries.py says so in its first paragraph, and the database grants the
+   application role append-only on `reading` and nothing on `device`. A
+   form that collects three fields and then cannot save them is the worst
+   thing to put in front of a customer, because they will fill it in.
+
+   So the chrome is the design's, exactly, and the content is the real
+   route: a device is commissioned from the gateway sheet by the
+   provisioning step. That is genuinely what somebody asking "how do I
+   add a meter" needs, and it is one click from where they asked.
+
+   When devices become editable in the UI - which needs the user model,
+   because an unattributed change to a register map is not something a
+   GxP site can accept - this becomes the form the design drew. #}
+
+{% import "_icons.html" as ico %}
+
+<div class="modal-backdrop" id="modal-add-device" hidden
+     role="dialog" aria-modal="true" aria-labelledby="modal-add-device-title">
+  <div class="modal">
+    <div class="modal-head">
+      <div>
+        <span class="eyebrow">Device management</span>
+        <h2 id="modal-add-device-title">Commissioning a device</h2>
+      </div>
+      <button class="icon-button" type="button" data-modal-close
+              aria-label="Close">{{ ico.icon('x') }}</button>
+    </div>
+
+    <p>
+      Devices are not created here. This dashboard only reads &mdash; the
+      application's database role has no write grant on the device tables
+      &mdash; so a new instrument arrives the same way the existing ones
+      did, from configuration.
+    </p>
+
+    <dl>
+      <div>
+        <dt>1 &middot; Add it to the gateway sheet</dt>
+        <dd>Its code, name, gateway, Modbus unit address and model go in
+            <code>config/prototype.toml</code>, beside the devices already
+            on that bus.</dd>
+      </div>
+      <div>
+        <dt>2 &middot; Provision</dt>
+        <dd>Run the provisioning step. It creates the device row, pins it
+            to the model revision its register map was written against,
+            and records when it was commissioned.</dd>
+      </div>
+      <div>
+        <dt>3 &middot; It appears</dt>
+        <dd>The poller picks it up on its next pass and the table above
+            shows it, offline, until the first reading arrives.</dd>
+      </div>
+    </dl>
+
+    <div class="modal-actions">
+      <button type="button" data-modal-close>Close</button>
+      <a class="primary-button" href="/devices">See commissioned devices</a>
+    </div>
+  </div>
+</div>

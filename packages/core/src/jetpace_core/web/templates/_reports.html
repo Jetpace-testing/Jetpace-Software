@@ -1,0 +1,49 @@
+{# The reports panel.
+
+   THE DESIGN LISTS THREE FINISHED PDFs with dates and file sizes -
+   "Daily Operations Report, Today 06:00 AM, 1.8 MB". There is no report
+   generator in this install, no scheduler and no stored file, so three
+   named PDFs with download buttons would be three buttons that 404, and
+   a size beside each would be a number invented to fill a slot.
+
+   What exists is the readings. So each row is a real export, produced
+   when the button is pressed and streamed out of the database, and says
+   its window and its format instead of a size nobody can know before
+   generating it.
+
+   Signed PDF reports are §10 work and come with the alarm model and the
+   user model - a report nobody is named on is not a report a GxP site
+   can use. #}
+
+{% import "_icons.html" as ico %}
+
+<div class="panel-heading compact">
+  <div>
+    <h2>Exports</h2>
+    <p>Generated on request, straight from the database</p>
+  </div>
+</div>
+
+<div class="report-list">
+  {% for r in exports %}
+    <div class="report-row">
+      <span class="report-icon">{{ ico.icon('report', 17) }}</span>
+      <div>
+        <strong>{{ r.label }}</strong>
+        <span>{{ r.note }}</span>
+      </div>
+      {# A plain link, not a button: the browser's own download is what
+         handles a streamed response of unknown length, and a link can be
+         opened in a new tab or copied by somebody scripting against it. #}
+      <a class="download" href="{{ r.href }}" download
+         aria-label="Download {{ r.label }}">{{ ico.icon('download', 17) }}</a>
+    </div>
+  {% endfor %}
+</div>
+
+<p class="panel-note">
+  CSV, UTF-8, timestamps in UTC as stored. Exports are capped so one
+  cannot outgrow the machine; the row count is in the first comment line
+  of each file. Scheduled and signed PDF reports need the user model that
+  signs them, and arrive with it.
+</p>

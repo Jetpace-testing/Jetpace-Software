@@ -19,7 +19,7 @@ from pathlib import Path
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from jetpace_core.web import queries as core_queries
-from jetpace_core.web.products import Product, Shell, Tile
+from jetpace_core.web.products import Event, Product, Shell, Tile
 
 from .. import queries
 
@@ -109,6 +109,46 @@ def tiles(conn) -> list[Tile]:
     ]
 
 
+def events(conn) -> list[Event]:
+    """
+    The exceptions only this product can see.
+
+    The shell knows when a device has stopped answering and when the
+    poller flagged a sample, because both are facts about data arriving.
+    It cannot know that 0 Pa across a cleanroom door is a failure,
+    because that judgement needs the specification - and the
+    specification is this product's. A pressure cascade holds the clean
+    side above the dirty side; at or below zero the room is no longer
+    protecting itself, whatever the instrument is doing.
+
+    Deliberately NOT a severity. There is no alarm model to carry one
+    (see Event), and inventing "critical" versus "warning" here would be
+    inventing a scale no engineer at the site has agreed.
+    """
+    found = []
+    for e in queries.excursion_episodes(conn, hours=24, limit=8):
+        minutes = e["minutes"] or 0
+        found.append(Event(
+            # WHEN IT STARTED, whether or not it has finished. The panel
+            # has one time column, so it has to mean one thing: an
+            # episode stamped with its end while the one above it is
+            # stamped with its beginning is a log nobody can read. The
+            # duration beside it says how far it ran.
+            when=e["started"],
+            kind="excursion",
+            device=e["code"],
+            where=e["name"],
+            parameter="Diff. pressure",
+            # Formatted here: pascals to one decimal is this product's
+            # knowledge, not the shell's.
+            value=f"{float(e['worst']):,.1f} Pa",
+            limit="> 0 Pa",
+            ongoing=bool(e["ongoing"]),
+            detail=f"{minutes} min at or below zero" if minutes else "",
+        ))
+    return found
+
+
 def product() -> Product:
     return Product(
         slug="environment",
@@ -118,4 +158,5 @@ def product() -> Product:
         stylesheet="environment.css",
         routes=routes,
         tiles=tiles,
+        events=events,
     )

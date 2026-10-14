@@ -1,0 +1,80 @@
+{# The exceptions panel - the design's "Recent Alarms", and deliberately
+   not called that.
+
+   THERE IS NO ALARM MODEL IN THIS SCHEMA. No limits table, no alarm row,
+   no severity, no acknowledgement (architecture.md §10). The design's
+   panel has Severity and a Status of Active or Acknowledged, both of
+   which need the subsystem that does not exist.
+
+   What does exist is three honest kinds of exception:
+
+     silent     a device has stopped answering, or never started. The
+                shell knows this, because it is a fact about data
+                arriving rather than about what the data means.
+     suspect    the poller itself flagged the sample: 1 substituted from
+                a device's own log, 2 suspect. Also the shell's to know.
+     excursion  a reading outside a specification. Only a product can
+                say this, because only a product has the specification -
+                a cleanroom cascade holds the clean side above the dirty
+                side - so these arrive through Product.events.
+
+   The state chip is the design's, with the one distinction that is
+   genuinely available without an acknowledgement model: still happening,
+   or recovered. Nothing here is stored and nothing can be acknowledged,
+   which the note at the bottom says out loud - a panel that looks like
+   an alarm list would otherwise be read as one. #}
+
+{% import "_icons.html" as ico %}
+
+{% set BADGE = {'silent':    ('offline',  'Silent'),
+                'suspect':   ('warning',  'Suspect'),
+                'excursion': ('critical', 'Excursion')} %}
+
+<div class="panel-heading compact">
+  <div>
+    <h2>Recent Exceptions</h2>
+    <p>Derived from this install's own data &mdash; not an alarm log</p>
+  </div>
+  <a class="text-button" href="/devices">All devices {{ ico.icon('chevron', 13) }}</a>
+</div>
+
+{% if events %}
+  <div class="alarm-table">
+    <div class="alarm-head">
+      <span>Time</span><span>Kind</span><span>Device &amp; Location</span>
+      <span>Parameter</span><span>Reading</span><span>Expected</span>
+      <span>State</span>
+    </div>
+    {% for e in events %}
+      {% set kind, word = BADGE[e.kind] %}
+      <div class="alarm-row">
+        <span>
+          {% if e.when %}{{ e.when.strftime('%H:%M:%S') }}<small>{{ e.when.strftime('%d %b') }}</small>
+          {% else %}&mdash;<small>never</small>{% endif %}
+        </span>
+        <span>
+          <span class="status-badge {{ kind }}"><span class="status-dot"></span>{{ word }}</span>
+        </span>
+        <span><strong>{{ e.device }}</strong><small>{{ e.where }}</small></span>
+        <span>{{ e.parameter }}{% if e.detail %}<small>{{ e.detail }}</small>{% endif %}</span>
+        <span class="{{ 'reading-alert' if e.kind == 'excursion' else 'reading-warn' }}">{{ e.value }}</span>
+        <span>{{ e.limit }}</span>
+        <span><span class="alarm-state{{ '' if e.ongoing else ' ack' }}">{{
+          'Ongoing' if e.ongoing else 'Recovered' }}</span></span>
+      </div>
+    {% endfor %}
+  </div>
+
+  <p class="panel-note">
+    Recomputed on every refresh from readings and from each loaded
+    product's own specification. Nothing here is stored and nothing can be
+    acknowledged: this install has no alarm subsystem, so there is no
+    alarm to acknowledge and no history to keep.
+  </p>
+{% else %}
+  <div class="empty-state">
+    {{ ico.icon('shield', 24) }}
+    <strong>No exceptions</strong>
+    <span>Every device is answering and no sample was flagged.</span>
+  </div>
+{% endif %}

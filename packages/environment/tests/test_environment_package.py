@@ -58,3 +58,19 @@ def test_the_stylesheet_introduces_no_colour_of_its_own():
     for literal in ("#", "rgb(", "hsl("):
         # '#' appears in no rule here; var(--x) is the only colour source
         assert literal not in css, f"environment.css contains {literal!r}"
+
+
+# --- the exceptions this product contributes ------------------------------
+
+def test_the_product_contributes_its_own_exceptions():
+    """
+    The shell can say a device has gone silent. Only this product can say
+    that 0 Pa across a cleanroom door is a failure, because only this
+    product holds the cascade's specification - so the overview's
+    exceptions panel has to reach it through Product.events.
+    """
+    from jetpace_environment.web import product
+
+    assert product().events is not None, (
+        "an environment install should contribute its excursions to the "
+        "shared exceptions panel")

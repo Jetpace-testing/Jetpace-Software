@@ -214,7 +214,11 @@ and is an invariant in CLAUDE.md, so it stayed as `devices.py`.
   references.** Verified, and worth re-verifying: this is what made adding a
   third transport a change to `sinks.py` and two entry points, and nothing else.
 - **`web/` is read-only.** It never writes a reading. Its database role has
-  `UPDATE` and `DELETE` revoked on `reading`.
+  `UPDATE` and `DELETE` revoked on `reading`, and no grant at all on `device` —
+  which is why the overview's Add Device button opens an explanation rather than
+  a form. The CSV exports are reads like any page, bounded by a window clamp and
+  a row cap, and as unauthenticated as everything beside them until §10 puts a
+  login in front of the whole application.
 - **`scripts/` is not a library.** Nothing in `packages/` may import from it.
   Scripts compose; they do not define.
 
@@ -261,6 +265,33 @@ then:
 - renders the navigation from the loaded products, so a customer who bought one
   product has no tab for the other;
 - includes each product's router last, so a product cannot shadow `/healthz`.
+
+**Three things a product contributes beyond its own pages**, all optional, all
+with the same rule: the product formats the value, because the product owns the
+units and the vocabulary.
+
+- `tiles(conn) -> list[Tile]` — figures on the shared overview. Pascals to one
+  decimal place is the environmental product's knowledge; handing core a float
+  and a format string would put a product's units back into the shared layer by
+  the back door. `state` is `""`, `"good"` or `"alarm"` and `tone` is one of six
+  named colours, both validated in `__post_init__`, so a product cannot invent a
+  status vocabulary beside the shell's.
+- `events(conn) -> list[Event]` — exceptions on the shared overview. The shell
+  knows a device has gone silent and that the poller flagged a sample, because
+  both are facts about data arriving. It cannot know that 0 Pa across a cleanroom
+  door is a failure, because that needs the specification, and the specification
+  is the product's. `kind` is `"silent"`, `"suspect"` or `"excursion"` and
+  nothing else. **This is not the alarm model** — see §10; nothing is stored and
+  nothing can be acknowledged, because there is no alarm row and no user to
+  attribute an acknowledgement to.
+- `stylesheet` — linked only when the product is loaded, so a cleanroom install
+  does not fetch the energy CSS.
+
+Both callables are invoked **inside a per-product `try`**. A product whose query
+fails must not blank the first screen, and must not vanish quietly either: it
+gets a tile and a row saying so, in its own place, and the rest of the page is
+unaffected. A site running for a week with a figure silently missing is the
+failure being prevented.
 
 **Resolution is by name, not by entry point.** `importlib.import_module` on a
 slug from `config/products.toml`. Entry points would be the idiomatic answer and
@@ -585,6 +616,9 @@ Honest register of where the repo and the specification disagree.
 | 14 | **One frozen bundle carries both products**; which one a site serves is `config/products.toml` | Deliberate: it keeps `REPLACEABLE`, the NSIS file lists and the one-version-per-release-zip assumption untouched, which matters because the updater must work before anything ships. The cost is that an environment-only customer has the energy code on disk, unreachable but present — which a validated install may eventually object to |
 | 15 | ~~`/healthz` asserts a 24-hour reading count, not freshness~~ — **fixed.** It now requires a reading to have arrived since the process started **and** to be younger than `READING_AGE_LIMIT` | Found the hard way on 13 October: readings stopped at 16:55 and the gate stayed green with 67k still inside the window. Fixing it surfaced a second bug the first had been hiding — freshness alone would still have passed, because the *previous* version's readings are seconds old when the gate runs. See §5 |
 | 16 | **Several dashboards, one health gate.** The supervisor watches one `health_url`; a single product instance failing is caught only by child restart | Each instance answers for itself on its own port, but `Supervisor.from_config` takes one URL. Widening it means editing `supervisor.py`, which debt #5 says can only reach a site through the installer — so this waits for a reason better than tidiness |
+| 17 | **The exceptions panel's suspect query has no index behind it.** `reading.quality` is unindexed, so `SUSPECT` is a scan of whatever window it is given — bounded to 6 hours and polled every 30 s, which is affordable on this prototype and will not be on a 400-meter site | The fix is one line, `CREATE INDEX ... ON reading (ts DESC) WHERE quality <> 0`, and it is cheap because almost no row qualifies. It is a migration against a running install, which is not something to slip into a screen build — so it is recorded here and goes out with the next schema change |
+| 18 | **No report generator.** The overview's panel offers CSV exports produced on request, not the scheduled, signed PDFs the design draws | A GxP site needs a report with a name on it, which needs the user model (§10). The exports are real and bounded; what is missing is attribution and scheduling, not data |
+| 19 | **Three polled regions on the overview, one connection each.** `/partials/live` (5 s, four panels via out-of-band swaps), `/partials/device-card` (15 s) and `/partials/exceptions` (30 s) | Each request opens its own connection — `queries.connect` has no pool. Fine at one dashboard; three product instances on one machine is nine connections of churn, and a pooler is the answer before a site with several operators |
 
 ---
 
@@ -604,6 +638,29 @@ Immediate order:
    declared `Sink` Protocol, was listed with it and is still open.
 4. **Device list into the database** with a dry-run diff.
 5. **Mosquitto as a service.**
+6. **The alarm model.** Not cosmetic, and now the single largest gap the
+   frontend keeps running into. The Figma design's first screen has an Active
+   Alarms figure, a severity column, a Recent Alarms panel, an Acknowledge
+   action and an alarm filter — five features, all of which need the same
+   missing thing: a limits table, an alarm row with a lifecycle, and a user to
+   attribute an acknowledgement to. What is built instead is `Product.events`
+   (§3), which derives exceptions on each request from silence, flagged samples
+   and each product's own specification, and says in the panel that it is doing
+   so. *Gate: an alarm raised by a limit survives a restart, and an
+   acknowledgement is attributable.* Meril RTD already has all of this; reuse it
+   rather than rewriting.
+
+**Deliberately not built, and what each would need.** Recorded here so the next
+person does not take the design as a to-do list:
+
+| The design draws | Why it is not here |
+|---|---|
+| A floor plan with named zones at fixed coordinates | There is no room, zone or coordinate in the schema — a device belongs to a gateway. The panel groups by gateway, which is a real area, and lays the zones out rather than positioning them |
+| Temperature, humidity and pressure columns on every device row | Its sample data has all three on every device; real instruments do not. The reading column follows whatever parameter each device actually has |
+| An Add Device form | The application has no write path at all; the app role's grant on `reading` is append-only and it has none on `device`. The modal explains commissioning instead. A real form needs the user model, because an unattributed change to a register map is not something a validated site can accept |
+| Three finished PDF reports with file sizes | Debt #18 |
+| Upper and lower limit lines on the trend | Same missing limits table as the alarm model. A threshold somebody could read a specification off would be the most dangerous thing on the page |
+| "Range 18–24 °C" on each parameter card | Likewise. The cards show the observed 24-hour range instead, labelled as observed |
 
 Then P1 onward from §16: billing onto the aggregates, validated against twelve
 months of Meril reports to the paisa.

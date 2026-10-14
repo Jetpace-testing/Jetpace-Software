@@ -1,0 +1,74 @@
+{# The figures above the first screen - the children of .kpi-grid.
+
+   Split out of _live.html when the rest of the design's first screen
+   landed. The design puts the figures in their own row ABOVE the
+   two-column body, so they cannot share a polled region with the device
+   table that sits in one of its columns. They are refreshed together
+   anyway - see _live_push.html, which carries this back as an
+   out-of-band swap on the same request. #}
+
+{% import "_icons.html" as ico %}
+
+{% set offline = (summary.devices or 0) - (summary.online or 0) %}
+
+{# The design's first four are the shell's own and true of any product.
+   Its fourth is Active Alarms; there is no alarm model in the schema -
+   not a card, a subsystem - so the slot carries what this install can
+   actually answer for rather than a number nobody could defend. #}
+<article class="kpi-card featured">
+  <div class="kpi-icon blue">{{ ico.icon('device') }}</div>
+  <div class="kpi-copy">
+    <span>Total Devices</span>
+    <strong>{{ summary.devices or 0 }}</strong>
+    <small>commissioned</small>
+  </div>
+</article>
+
+<article class="kpi-card">
+  <div class="kpi-icon green">{{ ico.icon('wifi') }}</div>
+  <div class="kpi-copy">
+    <span>Online Devices</span>
+    <strong>{{ summary.online or 0 }}</strong>
+    <small>{% if summary.devices %}{{
+      '%.1f' | format(100 * (summary.online or 0) / summary.devices)
+    }}% connected{% else %}none commissioned{% endif %}</small>
+  </div>
+</article>
+
+<article class="kpi-card">
+  <div class="kpi-icon gray">{{ ico.icon('activity') }}</div>
+  <div class="kpi-copy">
+    <span>Offline Devices</span>
+    <strong>{{ offline }}</strong>
+    <small{{ ' class="danger-text"' | safe if offline }}>
+      {{ 'not reporting' if offline else 'all reporting' }}</small>
+  </div>
+</article>
+
+<article class="kpi-card">
+  <div class="kpi-icon teal">{{ ico.icon('trend') }}</div>
+  <div class="kpi-copy">
+    <span>Readings, 24 h</span>
+    <strong>{{ '{:,}'.format(summary.readings_24h or 0) }}</strong>
+    <small>{% if summary.newest %}newest {{ summary.newest.strftime('%H:%M:%S') }}
+           {% else %}none yet{% endif %}</small>
+  </div>
+</article>
+
+{# And then whatever the products on this install contribute. The
+   design's remaining three are average temperature, humidity and
+   differential pressure - all product knowledge, none of it something
+   the shell may name. An environment install fills these; an energy
+   one fills different ones; an install with neither shows four cards
+   and no gap. #}
+{% for t in product_tiles or [] %}
+  <article class="kpi-card">
+    <div class="kpi-icon {{ t.tone }}">{{ ico.icon(t.icon) }}</div>
+    <div class="kpi-copy">
+      <span>{{ t.label }}</span>
+      <strong>{{ t.value }}{% if t.small %} <small>{{ t.small }}</small>{% endif %}</strong>
+      <small{{ ' class="danger-text"' | safe if t.state == 'alarm' }}>
+        {{ 'attention' if t.state == 'alarm' else ('in range' if t.state == 'good' else '') }}</small>
+    </div>
+  </article>
+{% endfor %}

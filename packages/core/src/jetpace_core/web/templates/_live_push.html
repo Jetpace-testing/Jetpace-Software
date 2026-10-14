@@ -1,0 +1,38 @@
+{# What /partials/live actually answers with.
+
+   THE PROBLEM. The design's first screen has the figures in a row at the
+   top, the device table in the left column of the row below, and the
+   facility and distribution panels in other cells entirely. All four
+   want refreshing together, and they are not siblings - there is a trend
+   chart between them that must NOT be swapped, because replacing a
+   <canvas> every five seconds destroys and redraws the chart under
+   whoever is reading it.
+
+   Four polled regions would be four requests, four connections and four
+   sets of queries every five seconds, for one logical refresh.
+
+   SO: one request, and the three panels that are not the target come
+   back as out-of-band swaps. HTMX lifts any top-level element carrying
+   `hx-swap-oob` out of the response and swaps it into the element with
+   the same id, wherever that is in the document. The target region gets
+   the rest. One round trip, one connection, four panels updated, and the
+   chart between them untouched.
+
+   Each out-of-band element has to carry its own tag, id and classes,
+   because the swap replaces the whole element and not its contents. That
+   is why the wrappers are repeated here and in index.html rather than
+   being in the included partials. #}
+
+{% include "_live.html" %}
+
+<section class="kpi-grid" id="kpis" aria-label="Key figures" hx-swap-oob="true">
+  {% include "_kpis.html" %}
+</section>
+
+<section class="panel" id="facility" hx-swap-oob="true">
+  {% include "_facility.html" %}
+</section>
+
+<section class="panel distribution-panel" id="distribution" hx-swap-oob="true">
+  {% include "_distribution.html" %}
+</section>

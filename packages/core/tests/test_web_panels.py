@@ -1,0 +1,519 @@
+"""
+The rest of the design's first screen: the panels, their seams and the
+exports.
+
+Same discipline as test_web_composition: a fabricated product rather than
+a real one, so core's tests do not depend on a product, and no database -
+every query the overview runs is stubbed by name. What is proved here is
+the mechanism. That the real products describe their own exceptions
+correctly is proved by their own tests.
+
+The test worth reading first is
+`test_every_out_of_band_id_exists_on_the_page`. The live partial refreshes
+four panels on one request by naming their ids; a renamed id does not
+error, it just stops refreshing, and a panel that quietly freezes on a
+plant PC is the exact failure this project has been bitten by three
+times.
+"""
+
+import re
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+from fastapi import APIRouter, Request
+from fastapi.responses import HTMLResponse
+from fastapi.testclient import TestClient
+
+from jetpace_core.web import app as A
+from jetpace_core.web import products as P
+from jetpace_core.web.app import HERE, create_app
+
+DSN = "postgresql://unused:unused@127.0.0.1:1/unused"
+TEMPLATES = HERE / "templates"
+
+NOW = datetime(2026, 10, 14, 10, 32, 45, tzinfo=timezone.utc)
+
+
+# --- the stub -------------------------------------------------------------
+
+def stub(monkeypatch, **overrides):
+    """
+    Every query the overview and its partials run, answered in memory.
+
+    Listed by name on purpose - see the note in test_web_composition's
+    own stub. A new panel fails these tests until its query appears
+    here, which is the moment to notice the first screen costs another
+    query.
+    """
+    class _Conn:
+        def __enter__(self): return self
+        def __exit__(self, *exc): return False
+
+    answers = {
+        "summary": {"devices": 3, "online": 2, "online_points": 4,
+                    "readings_24h": 4321, "newest": NOW},
+        "live": [],
+        "distribution": {"devices": 3, "online": 2, "silent": 1,
+                         "never_seen": 0, "gateways": 2, "gateways_live": 1},
+        "facility": [],
+        "silence": [],
+        "suspect": [],
+        "device": None,
+        "device_points": [],
+        "device_shape": {},
+        "export_devices": [],
+        "export_readings": (),
+    }
+    answers.update(overrides)
+
+    from jetpace_core.web import queries as q
+    monkeypatch.setattr(q, "connect", lambda dsn: _Conn())
+    monkeypatch.setattr(q, "summary", lambda conn: answers["summary"])
+    monkeypatch.setattr(q, "live", lambda conn: answers["live"])
+    monkeypatch.setattr(q, "distribution", lambda conn: answers["distribution"])
+    monkeypatch.setattr(q, "facility", lambda conn: answers["facility"])
+    monkeypatch.setattr(q, "silence",
+                        lambda conn, limit=12: answers["silence"])
+    monkeypatch.setattr(q, "suspect",
+                        lambda conn, hours=6, limit=12: answers["suspect"])
+    monkeypatch.setattr(q, "device", lambda conn, code: answers["device"])
+    monkeypatch.setattr(q, "device_points",
+                        lambda conn, code: answers["device_points"])
+    monkeypatch.setattr(q, "device_shape",
+                        lambda conn, code: answers["device_shape"])
+    monkeypatch.setattr(q, "export_devices",
+                        lambda conn: answers["export_devices"])
+
+    class _Rows:
+        def __enter__(self): return iter(answers["export_readings"])
+        def __exit__(self, *exc): return False
+
+    monkeypatch.setattr(q, "export_readings",
+                        lambda conn, hours, limit: _Rows())
+
+
+def eventful_product(tmp_path: Path, events) -> P.Product:
+    """A fabricated product that contributes exceptions and nothing else."""
+    templates = tmp_path / "templates"
+    templates.mkdir(exist_ok=True)
+    (templates / "demo.html").write_text(
+        '{% extends "_base.html" %}{% block nav %}demo{% endblock %}'
+        "{% block content %}<p>fabricated</p>{% endblock %}",
+        encoding="utf-8")
+
+    def routes(shell: P.Shell) -> APIRouter:
+        router = APIRouter()
+
+        @router.get("/demo", response_class=HTMLResponse)
+        def page(request: Request):
+            return shell.templates.TemplateResponse(request, "demo.html", {})
+
+        return router
+
+    return P.Product(slug="demo", label="Demo", templates=templates,
+                     routes=routes, events=events)
+
+
+# --- the out-of-band contract --------------------------------------------
+
+OOB = re.compile(r'id="([^"]+)"[^>]*hx-swap-oob')
+
+# Jinja comments, which these files are full of - the notes explaining
+# what the design asked for and why it is not there say the very words
+# the assertions below look for.
+COMMENT = re.compile(r"\{#.*?#\}", re.S)
+
+
+def without_comments(path: Path) -> str:
+    return COMMENT.sub("", path.read_text(encoding="utf-8"))
+
+
+def test_every_out_of_band_id_exists_on_the_page():
+    """
+    THE ONE THAT FAILS SILENTLY IN PRODUCTION.
+
+    /partials/live refreshes four panels on one request: the device table
+    is the swap target, and the figures, facility and distribution panels
+    come back carrying `hx-swap-oob` plus the id of the element to
+    replace. HTMX does not complain about an id that matches nothing - it
+    drops the fragment - so renaming a panel on the page would leave it
+    rendered once at load and frozen for ever after, with a clean console
+    and a green suite.
+
+    So: every id the push template claims must be defined on the page
+    that includes it.
+    """
+    push = (TEMPLATES / "_live_push.html").read_text(encoding="utf-8")
+    page = (TEMPLATES / "index.html").read_text(encoding="utf-8")
+
+    claimed = set(OOB.findall(push))
+    assert claimed, "the push template no longer refreshes anything"
+
+    for ident in sorted(claimed):
+        assert f'id="{ident}"' in page, (
+            f"_live_push.html swaps #{ident} out of band, but index.html "
+            f"defines no element with that id - the panel would render "
+            f"once and then never refresh, in silence.")
+
+
+def test_the_push_template_targets_the_polled_region_itself():
+    """
+    The polled element swaps innerHTML, so the response's non-OOB part
+    has to be the content of THAT element and nothing else. Including the
+    page's own wrapper here would nest a panel inside itself on every
+    poll.
+    """
+    push = (TEMPLATES / "_live_push.html").read_text(encoding="utf-8")
+    first = push.split("{% include", 1)[1].split("%}", 1)[0]
+    assert "_live.html" in first, (
+        "the first include in _live_push.html must be the device panel's "
+        "own content, because that is what the swap target replaces")
+
+
+# --- the exceptions panel ------------------------------------------------
+
+def test_a_products_exceptions_reach_the_panel(tmp_path, monkeypatch):
+    seen = {}
+
+    def events(conn):
+        seen["conn"] = conn
+        return [P.Event(when=NOW, kind="excursion", device="DP-01",
+                        where="Cleanroom 1", parameter="Diff. pressure",
+                        value="-2.4 Pa", limit="> 0 Pa",
+                        detail="7 min at or below zero")]
+
+    app = create_app(DSN, [eventful_product(tmp_path, events)])
+    stub(monkeypatch)
+    body = TestClient(app).get("/").text
+
+    assert "DP-01" in body
+    assert "-2.4 Pa" in body
+    assert "Excursion" in body
+    assert seen, "the events callable was never given a connection"
+
+
+def test_one_products_broken_exceptions_do_not_blank_the_panel(tmp_path,
+                                                               monkeypatch):
+    """
+    A product that cannot say whether the plant is in spec is itself a
+    fault worth seeing on the first screen - so it becomes a row, not a
+    silence and not a 500.
+    """
+    def explode(conn):
+        raise RuntimeError("the rollup is not there")
+
+    app = create_app(DSN, [eventful_product(tmp_path, explode)])
+    stub(monkeypatch)
+    response = TestClient(app).get("/")
+
+    assert response.status_code == 200
+    assert "Recent Exceptions" in response.text
+    assert "unavailable" in response.text
+    assert "the rollup is not there" in response.text
+
+
+def test_the_shells_own_exceptions_need_no_product(monkeypatch):
+    """
+    Silence and a flagged sample are facts about data arriving, so the
+    shell knows them with no product loaded at all.
+    """
+    stub(monkeypatch,
+         silence=[{"code": "MTR-07", "name": "Feeder 7",
+                   "gateway": "Bus A", "newest": NOW - timedelta(hours=4),
+                   "age_s": 14400}],
+         suspect=[{"code": "MTR-02", "name": "Feeder 2", "gateway": "Bus A",
+                   "parameter": "Active energy", "unit": "kWh",
+                   "decimals": 1, "newest": NOW, "samples": 3,
+                   "worst": 2, "value": 1234.5}])
+
+    body = TestClient(create_app(DSN)).get("/").text
+
+    assert "MTR-07" in body and "Silent" in body
+    assert "silent for 4 h" in body
+    assert "MTR-02" in body and "Suspect" in body
+    assert "3 suspect samples" in body
+
+
+def test_ongoing_exceptions_sort_above_recovered_ones(monkeypatch):
+    """
+    A site with two hundred silent devices must not push a live pressure
+    excursion off the bottom of a panel that shows a dozen rows. The one
+    somebody has to act on goes first.
+    """
+    stub(monkeypatch,
+         suspect=[{"code": "OLD", "name": "n", "gateway": "g",
+                   "parameter": "p", "unit": "u", "decimals": 1,
+                   "newest": NOW, "samples": 1, "worst": 2, "value": 1.0}],
+         silence=[{"code": "LIVE", "name": "n", "gateway": "g",
+                   "newest": NOW - timedelta(days=9), "age_s": 777600}])
+
+    body = TestClient(create_app(DSN)).get("/").text
+    # The silent device is far older but still happening, so it leads.
+    assert body.index("LIVE") < body.index("OLD")
+
+
+def test_an_event_cannot_invent_a_kind():
+    """
+    Otherwise a product introduces its own severity vocabulary and the
+    shell's three badges stop meaning anything - the same rule as Tile's
+    colours.
+    """
+    with pytest.raises(ValueError, match="kind"):
+        P.Event(when=NOW, kind="catastrophic", device="x", where="y",
+                parameter="z", value="1", limit="2")
+
+
+def test_the_exceptions_panel_says_it_is_not_an_alarm_log(monkeypatch):
+    """
+    A panel laid out like an alarm list will be read as one. There is no
+    alarm model in this schema, so the page has to say so where somebody
+    looking at the rows can see it - not only in a comment in the
+    source.
+    """
+    stub(monkeypatch)
+    body = TestClient(create_app(DSN)).get("/").text
+    assert "not an alarm log" in body
+
+
+# --- the facility panel --------------------------------------------------
+
+def test_devices_group_by_gateway_with_a_count_per_state(monkeypatch):
+    """
+    Three states, not two: never-reported is a commissioning fault and
+    silent is a fault in the field, and merging them sends somebody to
+    the wrong place.
+    """
+    stub(monkeypatch, facility=[
+        {"gateway": "Bus A", "host": "10.0.0.5", "port": 502,
+         "enabled": True, "site": "Plant 1", "code": "D1", "name": "one",
+         "newest": NOW, "online": True, "age_s": 2},
+        {"gateway": "Bus A", "host": "10.0.0.5", "port": 502,
+         "enabled": True, "site": "Plant 1", "code": "D2", "name": "two",
+         "newest": NOW - timedelta(hours=5), "online": False, "age_s": 18000},
+        {"gateway": "Bus B", "host": "10.0.0.6", "port": 502,
+         "enabled": False, "site": "Plant 1", "code": "D3", "name": "three",
+         "newest": None, "online": None, "age_s": None},
+    ])
+
+    body = TestClient(create_app(DSN)).get("/").text
+
+    assert "Bus A" in body and "Bus B" in body
+    assert "2 gateways" in body
+    assert "Online <b>1</b>" in body
+    assert "Silent <b>1</b>" in body
+    assert "Never reported <b>1</b>" in body
+    # The disabled gateway is drawn differently rather than hidden: a bus
+    # somebody switched off is a reason devices are quiet.
+    assert "zone disabled" in body
+
+
+def test_the_facility_panel_invents_no_floor_plan():
+    """
+    The design positions five named zones at hand-chosen coordinates.
+    There is no room, zone or coordinate in this schema, so a floor plan
+    here could only be invented - and an invented plan in front of a
+    customer is a promise the software cannot keep.
+    """
+    markup = without_comments(TEMPLATES / "_facility.html")
+    for invented in ("cleanroom", "production", "warehouse", "utility",
+                     "electrical"):
+        assert f'class="zone {invented}' not in markup.lower()
+    assert "grouped by gateway" in markup
+
+
+# --- the distribution donut ----------------------------------------------
+
+def test_the_donut_stops_come_from_the_counts(monkeypatch):
+    """
+    The ring is drawn from the same query as the list beside it, with the
+    stops written into the element - so the two cannot drift. Eight
+    devices, five online, two silent: 62.5% then 87.5%.
+    """
+    stub(monkeypatch, distribution={
+        "devices": 8, "online": 5, "silent": 2, "never_seen": 1,
+        "gateways": 2, "gateways_live": 2})
+
+    body = TestClient(create_app(DSN)).get("/").text
+
+    assert "--stop-1: 62.500%" in body
+    assert "--stop-2: 87.500%" in body
+    assert "62.5%" in body and "25.0%" in body and "12.5%" in body
+
+
+def test_the_donut_is_never_the_only_encoding(monkeypatch):
+    """
+    A conic gradient says nothing to a screen reader and nothing to a
+    colourblind reader, so it is marked presentational and every slice is
+    named and counted in the list.
+    """
+    stub(monkeypatch)
+    body = TestClient(create_app(DSN)).get("/").text
+    assert 'class="donut" aria-hidden="true"' in body
+    for slice_ in ("Online", "Silent", "Never reported"):
+        assert f"{slice_}</span>" in body
+
+
+def test_no_devices_draws_an_empty_state_not_a_whole_ring(monkeypatch):
+    """
+    Zero of zero online would compute 0% and 0%, which paints the entire
+    ring the never-reported colour - a full amber circle on an install
+    with nothing commissioned yet.
+    """
+    stub(monkeypatch, distribution={
+        "devices": 0, "online": 0, "silent": 0, "never_seen": 0,
+        "gateways": 0, "gateways_live": 0})
+
+    body = TestClient(create_app(DSN)).get("/").text
+    assert "No devices commissioned" in body
+    assert "--stop-1" not in body
+
+
+# --- sparklines ----------------------------------------------------------
+
+def test_a_flat_series_draws_down_the_middle():
+    """
+    Pinning a flat line to the floor would read as "it fell to zero",
+    which is the one thing a flat line definitely does not mean.
+    """
+    points = A.sparkline([7.0, 7.0, 7.0])
+    ys = {p.split(",")[1] for p in points.split()}
+    assert ys == {f"{A.SPARK_H / 2:.2f}"}
+
+
+def test_a_high_reading_is_at_the_top():
+    """SVG y grows downward, so this is the easy sign error to make."""
+    points = [p.split(",") for p in A.sparkline([1.0, 9.0]).split()]
+    assert float(points[0][1]) > float(points[1][1])
+
+
+def test_nothing_to_draw_draws_nothing():
+    assert A.sparkline([]) == ""
+
+
+# --- the exports ---------------------------------------------------------
+
+def test_the_reports_panel_offers_only_routes_that_exist(monkeypatch):
+    """
+    The design lists three finished PDFs. There is no report generator
+    here, so every row must be an export that actually answers - a
+    download button that 404s on a demo is worse than a shorter panel.
+    """
+    stub(monkeypatch)
+    client = TestClient(create_app(DSN))
+    body = client.get("/").text
+
+    hrefs = re.findall(r'<a class="download" href="([^"]+)"', body)
+    assert hrefs, "the reports panel offers nothing"
+    for href in hrefs:
+        assert client.get(href).status_code == 200, href
+
+
+def test_an_export_window_is_clamped(monkeypatch):
+    """
+    An unbounded window is a way to take the dashboard down from a URL:
+    a day of a 400-meter site is millions of rows.
+    """
+    asked = {}
+
+    def capture(conn, hours, limit):
+        asked["hours"], asked["limit"] = hours, limit
+
+        class _Cur:
+            def __enter__(self): return iter(())
+            def __exit__(self, *exc): return False
+        return _Cur()
+
+    stub(monkeypatch)
+    monkeypatch.setattr("jetpace_core.web.queries.export_readings", capture)
+
+    client = TestClient(create_app(DSN))
+    client.get("/export/readings.csv?hours=999999").text
+
+    assert asked["hours"] == A.EXPORT_MAX_HOURS
+    assert asked["limit"] == A.EXPORT_MAX_ROWS
+
+
+def test_an_export_says_how_many_rows_it_gave(monkeypatch):
+    """
+    A truncated export that looks complete is worse than one that
+    refuses, so the count is in the file.
+    """
+    rows = [{"ts": NOW, "device": "D1", "device_name": "one, with a comma",
+             "gateway": "Bus A", "parameter": "dp", "unit": "Pa",
+             "value": 12.5, "quality": 0}]
+
+    class _Cur:
+        def __enter__(self): return iter(rows)
+        def __exit__(self, *exc): return False
+
+    stub(monkeypatch)
+    monkeypatch.setattr("jetpace_core.web.queries.export_readings",
+                        lambda conn, hours, limit: _Cur())
+
+    body = TestClient(create_app(DSN)).get("/export/readings.csv").text
+
+    assert "# 1 rows" in body
+    # And a value containing a comma survives the trip.
+    assert '"one, with a comma"' in body
+
+
+def test_the_device_export_is_a_real_inventory(monkeypatch):
+    stub(monkeypatch, export_devices=[{
+        "code": "D1", "name": "one", "gateway": "Bus A", "host": "10.0.0.5",
+        "port": 502, "unit_id": 3, "model": "iDP-100", "model_revision": "B",
+        "vendor": "Acme", "kind": "pressure", "site": "Plant 1",
+        "scan_class": "instantaneous", "commissioned_at": NOW}])
+
+    body = TestClient(create_app(DSN)).get("/export/devices.csv").text
+
+    assert "model_revision" in body
+    assert "iDP-100" in body
+    assert NOW.isoformat() in body
+
+
+# --- the modal -----------------------------------------------------------
+
+def test_the_add_device_modal_offers_no_form(monkeypatch):
+    """
+    There is no write path in this application - queries.py says so and
+    the database grants say so. A form that collects three fields and
+    cannot save them is the worst thing to put in front of a customer,
+    because they will fill it in.
+    """
+    stub(monkeypatch)
+    body = TestClient(create_app(DSN)).get("/").text
+
+    modal = body.split('id="modal-add-device"', 1)[1].split("</div>", 99)[0]
+    assert "<input" not in modal
+    assert "Devices are not created here" in body
+
+
+# --- the trend panel -----------------------------------------------------
+
+def test_the_trend_panel_claims_no_limits_it_does_not_have():
+    """
+    The design's legend has "Upper limit" and "Lower limit", drawn as
+    dashed thresholds. There are no limits anywhere in this schema; a
+    threshold line somebody could read a specification off would be the
+    most dangerous thing on the page.
+    """
+    markup = without_comments(TEMPLATES / "_trend.html")
+    assert "Upper limit" not in markup
+    assert "Lower limit" not in markup
+    assert "Range in each bucket" in markup
+
+
+def test_one_select_drives_both_the_card_and_the_trend():
+    """
+    Two controls for one choice is how a screen starts disagreeing with
+    itself - the cards showing one instrument while the line shows
+    another.
+    """
+    trend = (TEMPLATES / "_trend.html").read_text(encoding="utf-8")
+    page = (TEMPLATES / "index.html").read_text(encoding="utf-8")
+
+    assert 'hx-target="#device-card"' in trend
+    assert 'hx-include="#trend-device"' in page, (
+        "the device card's poll must carry the selection, or a refresh "
+        "snaps it back to the first device")

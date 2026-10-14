@@ -1,0 +1,88 @@
+{# The trend panel - the design's "Parameter Trends".
+
+   The design hand-draws one SVG path with hand-written axis labels and
+   three dashed threshold lines. This is ECharts against /api/trend, in
+   the same 246px well, with the same tab strip, the same topline figure
+   and the same legend.
+
+   TWO OF THE DESIGN'S THREE LEGEND ENTRIES ARE GONE. "Upper limit" and
+   "lower limit" need limits, and there are none in this schema - so the
+   legend names what is actually drawn: the average, and the range each
+   bucket covered. An average alone hides the excursion that matters,
+   which is the whole reason to open a trend.
+
+   THE DEVICE SELECT IS THE PAGE'S ONE SELECTION. It also drives the
+   selected-device panel above, by HTMX, so the cards and the line are
+   always the same instrument. Two controls for one choice is how a
+   screen starts disagreeing with itself. #}
+
+{% import "_icons.html" as ico %}
+
+<section class="panel trend-panel" id="trend">
+  <div class="panel-heading">
+    <div>
+      <h2>Parameter Trends <span id="trend-window">(last 24 hours)</span></h2>
+      <p id="trend-subject">&nbsp;</p>
+    </div>
+    <div class="heading-filters">
+      <label class="select-wrap">
+        <span class="sr-only">Device</span>
+        {# name="code" so hx-include on the device card sends it, and
+           hx-get here updates that card the moment the choice changes
+           rather than waiting for its next poll. #}
+        <select id="trend-device" name="code"
+                hx-get="/partials/device-card" hx-target="#device-card"
+                hx-swap="innerHTML">
+          {% for d in devices %}
+            <option value="{{ d.code }}"{{ ' selected' if d.code == selected }}>{{
+              d.code }} &middot; {{ d.name }}</option>
+          {% endfor %}
+        </select>
+        {{ ico.icon('chevron', 13) }}
+      </label>
+      <label class="select-wrap">
+        <span class="sr-only">Time range</span>
+        <select id="trend-hours">
+          {% for label, hours in ranges %}
+            <option value="{{ hours }}"{{ ' selected' if hours == 24 }}>{{
+              'Last ' ~ label }}</option>
+          {% endfor %}
+        </select>
+        {{ ico.icon('chevron', 13) }}
+      </label>
+    </div>
+  </div>
+
+  {# Filled by the script below from the selected device's own
+     parameters, because which parameters exist is a property of the
+     device and not of the page. #}
+  <div class="trend-tabs" id="trend-params" role="tablist"
+       aria-label="Parameter"></div>
+
+  <div class="chart-topline">
+    <div>
+      <strong id="trend-average">&mdash;</strong>
+      <span id="trend-average-note">Average over the window</span>
+    </div>
+    <div class="chart-legend">
+      <span><i class="data"></i>Average</span>
+      <span><i class="band"></i>Range in each bucket</span>
+      <span id="trend-zero-key" hidden><i class="zero"></i>Zero</span>
+    </div>
+  </div>
+
+  <div class="chart-area"><div id="trend-panel-chart"></div></div>
+
+  <div class="trend-foot">
+    <span id="trend-panel-source">&nbsp;</span>
+    <button class="toggle" type="button" id="trend-panel-toggle">Table view</button>
+  </div>
+  <div class="table-view tablewrap" id="trend-panel-table" hidden></div>
+
+  {# The parameters each device reports, from the same query that filled
+     the live table - so the tabs cost no extra round trip and cannot
+     disagree with the row above them. Rendered as JSON in a script of a
+     non-executable type, which is the one way to get structured data
+     into a page without a build step and without eval. #}
+  <script type="application/json" id="trend-points">{{ trend_points | tojson }}</script>
+</section>

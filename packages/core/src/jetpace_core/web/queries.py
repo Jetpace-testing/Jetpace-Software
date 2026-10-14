@@ -92,6 +92,10 @@ SELECT DISTINCT ON (d.id, p.key)
        g.label                                   AS gateway,
        d.unit_id,
        p.key                                     AS param,
+       -- The parameter's human label, for the trend panel's tabs. Not
+       -- product knowledge: `label` is whatever the site called the
+       -- measurement, the same string the device page already shows.
+       p.label                                   AS param_label,
        p.unit,
        p.decimals,
        p.aggregation,
@@ -332,3 +336,311 @@ def trend(conn: psycopg.Connection, code: str, param: str,
         cur.execute(sql, {"code": code, "param": param,
                           "hours": hours, "width": width})
         return cur.fetchall(), width, "hourly rollup" if rollup else "readings"
+
+
+# ---------------------------------------------------------------------------
+# the connectivity breakdown behind the distribution donut
+#
+# DEVICE-LEVEL ONLY, and that is the point. SUMMARY counts every reading
+# in the last 24 hours, which on a 400-meter site is tens of millions of
+# rows; this panel refreshes beside the live table and must not carry
+# that. Every figure below is a count over `device` with one indexed
+# lookup each, so it stays cheap however much history has accumulated.
+#
+# THREE STATES, NOT TWO. "Offline" in the design means one thing; here a
+# device that has never reported at all is a different situation from one
+# that reported this morning and stopped - the first is a commissioning
+# fault, the second is a fault in the field - and a donut that merges
+# them tells the operator to go looking in the wrong place.
+# ---------------------------------------------------------------------------
+
+DISTRIBUTION = f"""
+WITH seen AS (
+    SELECT d.id, l.ts AS newest
+    FROM   device d
+    LEFT   JOIN LATERAL (
+             SELECT r.ts FROM reading r
+             WHERE  r.device_id = d.id
+             ORDER  BY r.ts DESC LIMIT 1
+           ) l ON true
+    WHERE  d.retired_at IS NULL
+)
+SELECT count(*)                                                  AS devices,
+       count(*) FILTER (WHERE newest > now() - {OFFLINE_AFTER})  AS online,
+       count(*) FILTER (WHERE newest IS NOT NULL
+                          AND newest <= now() - {OFFLINE_AFTER}) AS silent,
+       count(*) FILTER (WHERE newest IS NULL)                    AS never_seen,
+       (SELECT count(*) FROM gateway WHERE enabled)              AS gateways,
+       (SELECT count(DISTINCT d.gateway_id)
+          FROM device d
+          JOIN reading r ON r.device_id = d.id
+                        AND r.ts > now() - {OFFLINE_AFTER}
+         WHERE d.retired_at IS NULL)                             AS gateways_live
+FROM   seen
+"""
+
+
+# ---------------------------------------------------------------------------
+# where the devices are, and how they are
+#
+# The design draws a floor plan: five named zones at hand-chosen
+# coordinates with device dots scattered over them. There is no room,
+# zone or coordinate anywhere in this schema - a device belongs to a
+# gateway, and a gateway to a site - so those positions could only be
+# invented, and an invented floor plan shown to a customer is a promise
+# that the software knows where their instruments are.
+#
+# A gateway IS the real grouping: it is one serial bus or one converter,
+# which in practice is one area of the plant. So the panel answers the
+# design's question - which parts of the facility are healthy - from the
+# grouping that exists, and lays the zones out rather than positioning
+# them.
+# ---------------------------------------------------------------------------
+
+FACILITY = f"""
+SELECT g.label                                   AS gateway,
+       g.host,
+       g.port,
+       g.enabled,
+       s.name                                    AS site,
+       d.code,
+       d.name,
+       l.ts                                      AS newest,
+       l.ts > now() - {OFFLINE_AFTER}            AS online,
+       GREATEST(0, EXTRACT(EPOCH FROM (now() - l.ts)))::int AS age_s
+FROM   device d
+JOIN   gateway g ON g.id = d.gateway_id
+JOIN   site s    ON s.id = d.site_id
+LEFT   JOIN LATERAL (
+         SELECT r.ts FROM reading r
+         WHERE  r.device_id = d.id
+         ORDER  BY r.ts DESC LIMIT 1
+       ) l ON true
+WHERE  d.retired_at IS NULL
+ORDER  BY g.label, d.code
+"""
+
+
+# ---------------------------------------------------------------------------
+# exceptions - what the shell can honestly say has gone wrong
+#
+# THERE IS NO ALARM MODEL. No table of limits, no alarm row, no
+# acknowledgement, no severity. The design's "Recent Alarms" panel is a
+# subsystem this install does not have (architecture.md §10), and the
+# only two kinds of exception the shared layer genuinely knows about are
+# below. Both are facts about data that has or has not arrived, which is
+# precisely what the shell is entitled to have an opinion on.
+#
+# A product that does have limits - a cleanroom has a pressure cascade
+# with a specification - contributes its own through Product.events.
+# ---------------------------------------------------------------------------
+
+# A device that has stopped answering, or never started.
+SILENCE = f"""
+SELECT d.code,
+       d.name,
+       g.label                                   AS gateway,
+       l.ts                                      AS newest,
+       GREATEST(0, EXTRACT(EPOCH FROM (now() - l.ts)))::int AS age_s
+FROM   device d
+JOIN   gateway g ON g.id = d.gateway_id
+LEFT   JOIN LATERAL (
+         SELECT r.ts FROM reading r
+         WHERE  r.device_id = d.id
+         ORDER  BY r.ts DESC LIMIT 1
+       ) l ON true
+WHERE  d.retired_at IS NULL
+  AND  (l.ts IS NULL OR l.ts <= now() - {OFFLINE_AFTER})
+ORDER  BY l.ts DESC NULLS LAST
+LIMIT  %(limit)s
+"""
+
+# Samples the poller itself flagged: 1 substituted from a device's own
+# log, 2 suspect. Grouped per device and parameter, because six hundred
+# consecutive suspect samples from one transmitter is ONE problem and a
+# list that shows it six hundred times has buried everything else.
+#
+# WINDOW DELIBERATELY SHORT. `quality` has no index, so this is a scan of
+# whatever window it is given; six hours is one or two hypertable chunks
+# and stays affordable. Before a 400-meter site runs this, it wants
+# `CREATE INDEX ... ON reading (ts DESC) WHERE quality <> 0` - a partial
+# index, which is cheap because almost no row qualifies. Recorded in
+# architecture.md rather than added here, because a schema change to a
+# running install is not something to slip into a screen build.
+SUSPECT = """
+SELECT d.code,
+       d.name,
+       g.label                                 AS gateway,
+       p.label                                 AS parameter,
+       p.unit,
+       p.decimals,
+       max(r.ts)                               AS newest,
+       count(*)                                AS samples,
+       max(r.quality)                          AS worst,
+       (array_agg(r.value ORDER BY r.ts DESC))[1] AS value
+FROM   reading r
+JOIN   device d    ON d.id = r.device_id AND d.retired_at IS NULL
+JOIN   gateway g   ON g.id = d.gateway_id
+JOIN   parameter p ON p.id = r.param
+WHERE  r.ts > now() - %(hours)s * interval '1 hour'
+  AND  r.quality <> 0
+GROUP  BY d.code, d.name, g.label, p.label, p.unit, p.decimals
+ORDER  BY max(r.ts) DESC
+LIMIT  %(limit)s
+"""
+
+SUSPECT_HOURS = 6
+
+
+# ---------------------------------------------------------------------------
+# the export behind the reports panel
+#
+# The design lists three finished PDF reports with file sizes. There is
+# no report generator, no scheduler and no stored file in this install,
+# so three named PDFs with download buttons would be three buttons that
+# 404. What does exist is the readings themselves, and the thing an
+# operator actually asks for at this stage is "give me the numbers" - so
+# the panel offers real exports, generated on request.
+#
+# STREAMED AND BOUNDED. A day of a 400-meter site is millions of rows;
+# this is read in server-side cursor batches and capped, so an export can
+# neither exhaust memory nor run until the browser gives up.
+# ---------------------------------------------------------------------------
+
+EXPORT_READINGS = """
+SELECT r.ts,
+       d.code     AS device,
+       d.name     AS device_name,
+       g.label    AS gateway,
+       p.key      AS parameter,
+       p.unit,
+       r.value,
+       r.quality
+FROM   reading r
+JOIN   device d    ON d.id = r.device_id AND d.retired_at IS NULL
+JOIN   gateway g   ON g.id = d.gateway_id
+JOIN   parameter p ON p.id = r.param
+WHERE  r.ts > now() - %(hours)s * interval '1 hour'
+ORDER  BY r.ts, d.code, p.key
+LIMIT  %(limit)s
+"""
+
+EXPORT_DEVICES = """
+SELECT d.code,
+       d.name,
+       g.label    AS gateway,
+       g.host,
+       g.port,
+       d.unit_id,
+       m.code     AS model,
+       m.revision AS model_revision,
+       m.vendor,
+       m.kind,
+       s.name     AS site,
+       d.scan_class,
+       d.commissioned_at
+FROM   device d
+JOIN   gateway g      ON g.id = d.gateway_id
+JOIN   device_model m ON m.id = d.model_id
+JOIN   site s         ON s.id = d.site_id
+WHERE  d.retired_at IS NULL
+ORDER  BY d.code
+"""
+
+
+# ---------------------------------------------------------------------------
+
+def distribution(conn: psycopg.Connection) -> dict:
+    with conn.cursor() as cur:
+        cur.execute(DISTRIBUTION)
+        return cur.fetchone() or {}
+
+
+def facility(conn: psycopg.Connection) -> list[dict]:
+    with conn.cursor() as cur:
+        cur.execute(FACILITY)
+        return cur.fetchall()
+
+
+def silence(conn: psycopg.Connection, limit: int = 12) -> list[dict]:
+    with conn.cursor() as cur:
+        cur.execute(SILENCE, {"limit": limit})
+        return cur.fetchall()
+
+
+def suspect(conn: psycopg.Connection, hours: int = SUSPECT_HOURS,
+            limit: int = 12) -> list[dict]:
+    with conn.cursor() as cur:
+        cur.execute(SUSPECT, {"hours": hours, "limit": limit})
+        return cur.fetchall()
+
+
+def export_readings(conn: psycopg.Connection, hours: float, limit: int):
+    """
+    Readings for a window, as a server-side cursor.
+
+    A named cursor so psycopg fetches in batches rather than building the
+    whole result in memory first - the difference between an export that
+    streams and one that takes the dashboard down with it.
+    """
+    cur = conn.cursor(name="export_readings")
+    cur.itersize = 2000
+    cur.execute(EXPORT_READINGS, {"hours": hours, "limit": limit})
+    return cur
+
+
+def export_devices(conn: psycopg.Connection) -> list[dict]:
+    with conn.cursor() as cur:
+        cur.execute(EXPORT_DEVICES)
+        return cur.fetchall()
+
+
+# ---------------------------------------------------------------------------
+# the shape of one device's day, for the parameter cards' sparklines
+#
+# FROM THE ROLLUP, not from raw. A day of one device at a 2-second scan
+# is 43,200 rows to draw a 24-pixel-tall line; the same day from
+# reading_hourly is 24. The sparkline cannot tell the difference and the
+# database very much can.
+#
+# The min and max come back with it because the cards show the range the
+# day actually covered. That is an OBSERVED range, not a specification -
+# there are no limits anywhere in this schema - so the card says "last
+# 24 h" and never "in spec". The design's cards say "Range 18-24 °C",
+# which is a specification it was given with its sample data; claiming
+# one here would be inventing the number that matters most.
+# ---------------------------------------------------------------------------
+
+DEVICE_SHAPE = """
+SELECT p.key,
+       h.bucket,
+       h.avg_value AS avg,
+       h.min_value AS min,
+       h.max_value AS max
+FROM   reading_hourly h
+JOIN   device d    ON d.id = h.device_id AND d.code = %(code)s
+JOIN   parameter p ON p.id = h.param
+WHERE  h.bucket > now() - interval '24 hours'
+ORDER  BY p.key, h.bucket
+"""
+
+
+def device_shape(conn: psycopg.Connection, code: str) -> dict[str, dict]:
+    """
+    Per parameter: the day's hourly averages, and the day's range.
+
+    Returned keyed by parameter so a template can look one up beside the
+    current value without a second pass.
+    """
+    with conn.cursor() as cur:
+        cur.execute(DEVICE_SHAPE, {"code": code})
+        rows = cur.fetchall()
+
+    shaped: dict[str, dict] = {}
+    for r in rows:
+        s = shaped.setdefault(r["key"], {"points": [], "lo": None, "hi": None})
+        s["points"].append(float(r["avg"]))
+        lo, hi = float(r["min"]), float(r["max"])
+        s["lo"] = lo if s["lo"] is None else min(s["lo"], lo)
+        s["hi"] = hi if s["hi"] is None else max(s["hi"], hi)
+    return shaped

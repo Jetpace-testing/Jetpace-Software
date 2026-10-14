@@ -454,7 +454,15 @@ def test_a_tile_cannot_invent_a_colour():
 
 
 def _stub_db(monkeypatch):
-    """The overview needs a connection; none of these tests need a database."""
+    """
+    The overview needs a connection; none of these tests need a database.
+
+    EVERY QUERY THE OVERVIEW RUNS IS NAMED HERE, deliberately, rather
+    than faked behind a cursor that answers anything. A new panel added
+    to the first screen fails these tests until its query is listed,
+    which is the moment to notice that the panel costs another query -
+    the overview is the one page a plant PC reloads every few seconds.
+    """
     class _Conn:
         def __enter__(self): return self
         def __exit__(self, *exc): return False
@@ -465,3 +473,12 @@ def _stub_db(monkeypatch):
         "devices": 8, "online": 3, "online_points": 6,
         "readings_24h": 1234, "newest": None})
     monkeypatch.setattr(q, "live", lambda conn: [])
+    monkeypatch.setattr(q, "distribution", lambda conn: {
+        "devices": 8, "online": 3, "silent": 4, "never_seen": 1,
+        "gateways": 2, "gateways_live": 1})
+    monkeypatch.setattr(q, "facility", lambda conn: [])
+    monkeypatch.setattr(q, "silence", lambda conn, limit=12: [])
+    monkeypatch.setattr(q, "suspect", lambda conn, hours=6, limit=12: [])
+    monkeypatch.setattr(q, "device", lambda conn, code: None)
+    monkeypatch.setattr(q, "device_points", lambda conn, code: [])
+    monkeypatch.setattr(q, "device_shape", lambda conn, code: {})

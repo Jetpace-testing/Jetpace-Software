@@ -1,0 +1,109 @@
+{# The selected-device panel - the design's "Selected device".
+
+   The design hard-wires TMP-002 and shows three parameter cards, one per
+   parameter its sample data gives every device. Here the device is
+   whichever one the trend panel below is pointed at - one selection
+   drives both, because two selects for the same choice is how a screen
+   starts lying to itself - and the cards are whatever that device
+   actually reports. A pressure transmitter has one card, a multifunction
+   meter has eight.
+
+   THE ICON FOLLOWS THE MEASUREMENT, NOT THE PRODUCT. A counter gets the
+   trend mark, a spot value gets the gauge, and `parameter.aggregation`
+   is the only thing consulted - the same basis as the zero line on the
+   device page. The shell is not allowed to know that 'dp' means a
+   cleanroom door, so it does not reach for a pressure icon.
+
+   THE RANGE IS OBSERVED, NOT SPECIFIED. The design's cards say
+   "Range 18-24 °C", which is a specification it was handed with its
+   sample data. There are no limits anywhere in this schema, so these say
+   "last 24 h" and give what the day did - a figure that is true. A
+   product with a specification puts it on its own page, where the
+   specification lives. #}
+
+{% import "_icons.html" as ico %}
+
+{% set TONES = ['blue', 'teal', 'amber'] %}
+
+{% if card and card.device %}
+  <div class="panel-heading compact">
+    <div>
+      <span class="eyebrow">Selected device</span>
+      <h2>{{ card.device.code }} &middot; {{ card.device.name }}</h2>
+    </div>
+    <a class="icon-button small" href="/devices/{{ card.device.code }}"
+       aria-label="Open {{ card.device.code }}">{{ ico.icon('chevron', 15) }}</a>
+  </div>
+
+  <div class="device-meta">
+    <span>{{ ico.icon('location', 14) }}{{ card.device.site }} /
+          {{ card.device.gateway }}</span>
+    <span>{{ ico.icon('clock', 14) }}{% if card.newest %}{{
+      card.newest.strftime('%d %b, %H:%M:%S') }}{% else %}no readings{% endif %}</span>
+  </div>
+
+  <div class="device-states">
+    {% if card.online %}
+      <span class="status-badge normal"><span class="status-dot"></span>Online</span>
+    {% else %}
+      <span class="status-badge offline"><span class="status-dot"></span>Offline</span>
+    {% endif %}
+    {% if card.suspect %}
+      <span class="status-badge warning"><span class="status-dot"></span>Suspect sample</span>
+    {% elif card.online %}
+      <span class="status-badge normal"><span class="status-dot"></span>Normal</span>
+    {% endif %}
+  </div>
+
+  {% if card.points %}
+    <div class="parameter-grid">
+      {% for p in card.points %}
+        {% set tone = TONES[loop.index0 % TONES | length] %}
+        <div class="parameter-card{{ ' warning-card' if p.quality }}">
+          <div>
+            <span class="parameter-icon {{ tone }}">{{
+              ico.icon('trend' if p.aggregation == 'counter' else 'gauge', 16) }}</span>
+            <b>{{ p.label }}</b>
+          </div>
+          <strong>{{ '{:,.{}f}'.format(p.value, p.decimals) }}
+                  <small>{{ p.unit }}</small></strong>
+          {# The day's hourly averages, from the rollup. Marked
+             presentational: it has no axes and no labels, so it cannot
+             be read as a figure - the range underneath is the number,
+             and the device page has the real chart. #}
+          {% if p.spark %}
+            <svg class="sparkline {{ tone }}" viewBox="0 0 100 24"
+                 preserveAspectRatio="none" aria-hidden="true" focusable="false">
+              <polyline points="{{ p.spark }}" fill="none" stroke-width="1.6"
+                        stroke-linejoin="round" stroke-linecap="round"
+                        vector-effect="non-scaling-stroke"/>
+            </svg>
+          {% endif %}
+          <p>Last 24 h
+            {% if p.lo is not none %}
+              <b>{{ '{:,.{}f}'.format(p.lo, p.decimals) }}&ndash;{{
+                    '{:,.{}f}'.format(p.hi, p.decimals) }} {{ p.unit }}</b>
+            {% else %}<b>no rollup yet</b>{% endif %}
+          </p>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="empty-state" style="height: 150px">
+      <strong>Nothing reported</strong>
+      <span>{{ card.device.code }} has no readings.</span>
+    </div>
+  {% endif %}
+{% else %}
+  <div class="panel-heading compact">
+    <div>
+      <span class="eyebrow">Selected device</span>
+      <h2>None</h2>
+    </div>
+  </div>
+  <div class="empty-state" style="height: 180px">
+    {{ ico.icon('device', 24) }}
+    <strong>No device selected</strong>
+    <span>Commission a device, or pick one in the trend panel.</span>
+  </div>
+{% endif %}

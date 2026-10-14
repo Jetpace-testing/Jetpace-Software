@@ -255,32 +255,54 @@
     if (!search && !state) { return; }
     var needle = (search ? search.value : "").trim().toLowerCase();
     var want = state ? state.value : "";
-    var shown = 0;
+    var matched = [];
 
+    // ONE PASS, and the page decides what to do with the result. The
+    // filter says which rows match; a paginator, if the page has one,
+    // says which of those are on this page. Two independent passes
+    // setting `hidden` would fight - whichever ran second would win, and
+    // which ran second would depend on event order.
     document.querySelectorAll("tr[data-device]").forEach(function (row) {
       var haystack = (row.dataset.device || "").toLowerCase();
       var ok = (!needle || haystack.indexOf(needle) !== -1) &&
                (!want || row.dataset.state === want);
       row.hidden = !ok;
-      if (ok) { shown++; }
+      if (ok) { matched.push(row); }
     });
+
+    if (window.__paginate) { window.__paginate(matched); }
 
     // Say when a filter has hidden everything. A table that simply ends
     // looks like a system with no devices, which is a different and much
     // more alarming thing than a search that matched nothing.
     var empty = document.getElementById("filtered-empty");
-    if (empty) { empty.hidden = shown !== 0; }
+    if (empty) { empty.hidden = matched.length !== 0; }
   }
 
+  // Exported so the paginator can ask for a re-run after a page change
+  // without duplicating the matching rules.
+  window.__applyFilter = apply;
+
   document.addEventListener("input", function (e) {
-    if (e.target.id === "device-filter") { apply(); }
+    if (e.target.id === "device-filter") {
+      if (window.__resetPage) { window.__resetPage(); }
+      apply();
+    }
   });
   document.addEventListener("change", function (e) {
-    if (e.target.id === "state-filter") { apply(); }
+    if (e.target.id === "state-filter") {
+      if (window.__resetPage) { window.__resetPage(); }
+      apply();
+    }
   });
   // And again after every HTMX swap, because the new rows arrive
   // unfiltered while the controls still show what was asked for.
   document.body.addEventListener("htmx:afterSwap", apply);
+
+  // And once at the start, so the row count beneath the table is the
+  // live one from the first paint rather than only after the first
+  // keystroke or the first poll.
+  ready(apply);
 })();
 
 // --- the theme switch ----------------------------------------------------

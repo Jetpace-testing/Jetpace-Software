@@ -68,3 +68,34 @@ def test_the_excursion_count_reports_the_worst_reading_too():
     """
     assert "worst" in queries.EXCURSIONS
     assert "minutes_below_zero" in queries.EXCURSIONS
+
+
+# --- excursion episodes ---------------------------------------------------
+
+def test_episodes_are_about_differential_pressure_too():
+    assert "p.key = 'dp'" in queries.EXCURSION_EPISODES
+    assert "retired_at IS NULL" in queries.EXCURSION_EPISODES
+
+
+def test_episodes_collapse_consecutive_samples():
+    """
+    EXCURSIONS answers "how much of the week was out of spec", which a
+    quality manager signs. This answers "when did it happen", which an
+    operator acts on - and forty-one minutes could be one door held open
+    or forty-one separate dips. Only the second is a cascade failing, so
+    the islands must be grouped rather than counted.
+    """
+    sql = queries.EXCURSION_EPISODES
+    assert "island" in sql
+    assert "OVER (" in sql
+    # Grouped BY the island, which is what makes a run one row.
+    assert "GROUP  BY m.code, m.name, m.island" in sql
+
+
+def test_an_episode_says_whether_it_is_still_happening():
+    """
+    A room still reversed needs somebody now; one that recovered an hour
+    ago is history. Without this the panel draws them identically, which
+    is the one distinction available with no acknowledgement model.
+    """
+    assert "ongoing" in queries.EXCURSION_EPISODES

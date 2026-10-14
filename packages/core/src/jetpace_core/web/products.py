@@ -114,6 +114,58 @@ class Tile:
 
 
 @dataclass(frozen=True)
+class Event:
+    """
+    One exception on the overview, contributed by a product.
+
+    WHY THIS EXISTS. The shell can say that a device has gone silent and
+    that the poller flagged a sample as suspect, because both are facts
+    about data arriving. It cannot say that a reading is out of
+    specification, because a specification belongs to a product: 10 to 20
+    pascals across a cleanroom door is the environmental product's
+    knowledge, and a meter running backwards is energy's.
+
+    THIS IS NOT AN ALARM MODEL. There is no table of limits, no alarm
+    row, no severity scale and no acknowledgement anywhere in this
+    install (architecture.md §10). An Event is a reading of this
+    install's own data, recomputed on each request; nothing is stored,
+    nothing can be acknowledged, and nothing survives a restart because
+    there is nothing to survive. When the alarm subsystem is built this
+    becomes its presentation layer, and the panel stops being derived.
+
+    Like Tile, the VALUE AND THE LIMIT ARRIVE FORMATTED, including their
+    units, because the product knows them and the shell does not.
+
+    `kind` picks the badge, and the shell has exactly three: "silent",
+    "suspect" and "excursion". A product cannot invent a fourth, for the
+    same reason it cannot invent a tile colour.
+
+    `ongoing` decides which of the design's two state chips is drawn. It
+    is the one genuinely useful distinction available without an
+    acknowledgement model: a pressure that is still reversed needs
+    somebody now, and one that recovered an hour ago is history.
+    """
+
+    when: Any                # a datetime; the shell formats it
+    kind: str
+    device: str              # the device code
+    where: str               # gateway, room, line - whatever the product calls it
+    parameter: str
+    value: str
+    limit: str
+    ongoing: bool = True
+    detail: str = ""         # e.g. "41 minutes below zero"
+
+    KINDS = ("silent", "suspect", "excursion")
+
+    def __post_init__(self) -> None:
+        if self.kind not in Event.KINDS:
+            raise ValueError(
+                f"event for {self.device!r} has kind {self.kind!r}; the "
+                f"shell draws {', '.join(Event.KINDS)} and nothing else.")
+
+
+@dataclass(frozen=True)
 class Product:
     """One product's contribution to the application."""
 
@@ -148,6 +200,13 @@ class Product:
     # numbers on the first screen, and this is how they get there without
     # core learning what a room is.
     tiles: Callable[[Any], list[Tile]] | None = None
+
+    # Optional: exceptions this product can see and the shell cannot,
+    # given an open connection. The shell's own two kinds - a device gone
+    # silent, a sample the poller flagged - are true of any product and
+    # are computed in core; anything judged against a specification needs
+    # the specification, which is the product's.
+    events: Callable[[Any], list[Event]] | None = None
 
     def __post_init__(self) -> None:
         if not self.slug.isascii() or not self.slug.isalpha():

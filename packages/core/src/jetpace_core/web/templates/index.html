@@ -6,14 +6,448 @@
 {% block page_lede %}Real-time monitoring across this installation.{% endblock %}
 
 {% block content %}
-  {# Everything here is true of any product: how many devices there
-     are, how many are answering, and how much has arrived. The
-     pressure and energy panels that used to sit below moved to
-     /environment and /energy when the shell was built - a page that
-     shows both is a page that is wrong for every customer who has
-     bought one of them. #}
-  <div id="live" hx-get="/partials/live" hx-trigger="every 5s"
-       hx-swap="innerHTML">
-    {% include "_live.html" %}
+  {# Imported inside the block, not above it: _base.html's own import is
+     local to _base.html, and a block body does not inherit it. #}
+  {% import "_icons.html" as ico %}
+
+  {# The design's first screen, in its own order: the figures, then a
+     wide panel beside a stack of two, then the trend beside the
+     distribution, then exceptions beside exports, then the quick
+     actions.
+
+     Everything here is true of any product. The pressure and energy
+     panels that used to sit on this page moved to /environment and
+     /energy when the shell was built - a page that shows both is a page
+     that is wrong for every customer, each of whom bought one of them.
+
+     THREE POLLED REGIONS, NOT SEVEN. /partials/live refreshes four
+     panels on one request through out-of-band swaps (see
+     _live_push.html); the device card polls more slowly because it is
+     one device rather than all of them; exceptions poll slowest because
+     their query is the only expensive one on the page. The trend panel
+     is not polled at all - it belongs to whoever is reading it. #}
+
+  <section class="kpi-grid" id="kpis" aria-label="Key figures">
+    {% include "_kpis.html" %}
+  </section>
+
+  <div class="dashboard-grid">
+    <section class="panel device-panel" id="live"
+             hx-get="/partials/live" hx-trigger="every 5s" hx-swap="innerHTML">
+      {% include "_live.html" %}
+    </section>
+
+    <div class="side-stack">
+      <section class="panel" id="facility">
+        {% include "_facility.html" %}
+      </section>
+
+      {# hx-include sends the trend panel's device select, so the poll
+         refreshes whichever device is selected rather than resetting to
+         the first one. #}
+      <section class="panel selected-device" id="device-card"
+               hx-get="/partials/device-card" hx-trigger="every 15s"
+               hx-include="#trend-device" hx-swap="innerHTML">
+        {% include "_device_card.html" %}
+      </section>
+    </div>
   </div>
+
+  <div class="analysis-grid">
+    {% include "_trend.html" %}
+
+    <section class="panel distribution-panel" id="distribution">
+      {% include "_distribution.html" %}
+    </section>
+  </div>
+
+  <div class="lower-grid">
+    <section class="panel alarms-panel" id="exceptions"
+             hx-get="/partials/exceptions" hx-trigger="every 30s"
+             hx-swap="innerHTML">
+      {% include "_exceptions.html" %}
+    </section>
+
+    <section class="panel reports-panel">
+      {% include "_reports.html" %}
+    </section>
+  </div>
+
+  {# The design's four quick actions are View Trends, Generate Report,
+     Manage Devices and Acknowledge Alarms. Three of those exist. The
+     fourth needs the alarm model and the user model that would attribute
+     the acknowledgement, so the slot carries the health endpoint instead
+     - which is what somebody checking the system actually wants, and is
+     the supervisor's own release gate. #}
+  <section class="quick-section">
+    <div class="section-title">
+      <h2>Quick Actions</h2>
+      <p>Common operational tasks</p>
+    </div>
+    <div class="quick-grid">
+      <a class="quick-action" href="#trend">
+        <span>{{ ico.icon('trend') }}</span>
+        <div><strong>View Trends</strong><small>Analyse sensor history</small></div>
+        {{ ico.icon('chevron', 15) }}
+      </a>
+      <a class="quick-action" href="/export/readings.csv?hours=24">
+        <span>{{ ico.icon('report') }}</span>
+        <div><strong>Export Readings</strong><small>Last 24 hours as CSV</small></div>
+        {{ ico.icon('chevron', 15) }}
+      </a>
+      <a class="quick-action" href="/devices">
+        <span>{{ ico.icon('settings') }}</span>
+        <div><strong>Manage Devices</strong><small>The commissioned fleet</small></div>
+        {{ ico.icon('chevron', 15) }}
+      </a>
+      <a class="quick-action" href="/healthz">
+        <span>{{ ico.icon('shield') }}</span>
+        <div><strong>System Health</strong><small>What the supervisor checks</small></div>
+        {{ ico.icon('chevron', 15) }}
+      </a>
+    </div>
+  </section>
+
+  {% include "_modal.html" %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+// The trend panel.
+//
+// Reuses /api/trend, which the device page already drives - one endpoint,
+// one bucketing decision, one definition of what "average" means. What is
+// different here is that the device is chosen rather than given, so the
+// parameter tabs have to be rebuilt whenever it changes: which parameters
+// exist is a property of the instrument, not of the page.
+ready(function () {
+  var host = document.getElementById("trend-panel-chart");
+  if (!host) { return; }
+
+  var POINTS = {};
+  try {
+    POINTS = JSON.parse(
+      document.getElementById("trend-points").textContent) || {};
+  } catch (e) {
+    POINTS = {};
+  }
+
+  var elDevice  = document.getElementById("trend-device");
+  var elHours   = document.getElementById("trend-hours");
+  var elTabs    = document.getElementById("trend-params");
+  var elSubject = document.getElementById("trend-subject");
+  var elWindow  = document.getElementById("trend-window");
+  var elAverage = document.getElementById("trend-average");
+  var elNote    = document.getElementById("trend-average-note");
+  var elSource  = document.getElementById("trend-panel-source");
+  var elZeroKey = document.getElementById("trend-zero-key");
+  var elTable   = document.getElementById("trend-panel-table");
+
+  if (!window.echarts) {
+    // Loud, not silent. A missing chart library is a broken install -
+    // the vendored file did not ship - and the one failure that must not
+    // happen is an empty panel that reads as "no data".
+    elSource.textContent = "the charting library did not load; "
+      + "/static/vendor/echarts.min.js is missing from this install";
+    return;
+  }
+
+  var chart = registerChart(echarts.init(host));
+  var state = { param: null, unit: "", decimals: 1, aggregation: "", rows: [] };
+
+  function device() { return elDevice ? elDevice.value : ""; }
+  function hours() { return elHours ? parseFloat(elHours.value) : 24; }
+
+  function fmt(v) {
+    return (v === null || v === undefined)
+      ? "—" : Number(v).toFixed(state.decimals);
+  }
+
+  // Rebuild the tab strip for the selected device, keeping the current
+  // parameter selected when the new device also has it - switching
+  // between two meters should not throw you back to the first channel.
+  function buildTabs() {
+    var points = POINTS[device()] || [];
+    var keep = state.param;
+    state.param = null;
+    elTabs.innerHTML = "";
+
+    points.forEach(function (p) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.role = "tab";
+      b.textContent = p.label;
+      b.dataset.param = p.key;
+      b.dataset.unit = p.unit;
+      b.dataset.decimals = p.decimals;
+      b.dataset.aggregation = p.aggregation || "";
+      elTabs.appendChild(b);
+    });
+
+    var wanted = elTabs.querySelector('[data-param="' + (keep || "") + '"]')
+              || elTabs.querySelector("[data-param]");
+    if (wanted) { select(wanted); }
+    else { empty("This device reports nothing yet."); }
+  }
+
+  function select(btn) {
+    elTabs.querySelectorAll("button").forEach(function (o) {
+      o.classList.remove("active");
+      o.setAttribute("aria-selected", "false");
+    });
+    btn.classList.add("active");
+    btn.setAttribute("aria-selected", "true");
+    state.param = btn.dataset.param;
+    state.unit = btn.dataset.unit;
+    state.decimals = parseInt(btn.dataset.decimals, 10);
+    state.aggregation = btn.dataset.aggregation || "";
+  }
+
+  function empty(why) {
+    chart.clear();
+    state.rows = [];
+    elAverage.textContent = "—";
+    elSource.textContent = why;
+    renderTable();
+  }
+
+  function draw(payload) {
+    var rows = payload.points || [];
+    state.rows = rows;
+    elWindow.textContent = "(" + payload.window + ")";
+    elSource.textContent = rows.length
+      ? rows.length + " points · " + payload.width + " buckets · from "
+        + payload.source
+      : "no readings in this window";
+
+    if (!rows.length) {
+      chart.clear();
+      elAverage.textContent = "—";
+      elNote.textContent = "Nothing recorded over " + payload.window;
+      renderTable();
+      return;
+    }
+
+    // The topline figure. Weighted by the samples each bucket actually
+    // holds, because a bucket with four readings in it must not count
+    // the same as one with four hundred - the mean of means is not the
+    // mean, and on a window that spans a poller restart they differ
+    // visibly.
+    var sum = 0, n = 0;
+    rows.forEach(function (r) { sum += r[1] * r[4]; n += r[4]; });
+    elAverage.textContent = (n ? (sum / n).toFixed(state.decimals) : "—")
+      + " " + state.unit;
+    elNote.textContent = "Average over " + payload.window
+      + " · " + n.toLocaleString() + " readings";
+
+    var hue = seriesColours()[0];
+    var band_lo = rows.map(function (r) { return [r[0], r[2]]; });
+    var band_hi = rows.map(function (r) { return [r[0], r[3] - r[2]]; });
+    var avg     = rows.map(function (r) { return [r[0], r[1]]; });
+
+    var opt = chartBase();
+    opt.grid = { left: 48, right: 14, top: 10, bottom: 24 };
+    opt.yAxis.name = state.unit;
+    opt.yAxis.nameTextStyle = { color: cssVar("--muted"), fontSize: 10,
+                                align: "left" };
+    opt.yAxis.nameLocation = "end";
+    opt.xAxis.axisLabel.fontSize = 10;
+    opt.yAxis.axisLabel.fontSize = 10;
+    opt.tooltip.formatter = function (ps) {
+      if (!ps.length) { return ""; }
+      var r = rows[ps[0].dataIndex];
+      return "<div style='font-size:11px;opacity:.7'>"
+        + new Date(r[0]).toLocaleString() + "</div><strong>" + fmt(r[1])
+        + " " + state.unit + "</strong>"
+        + "<div style='font-size:11px;opacity:.7'>range " + fmt(r[2])
+        + " to " + fmt(r[3]) + " &middot; " + r[4] + " samples</div>";
+    };
+    opt.series = [
+      { name: "low", type: "line", data: band_lo, stack: "band",
+        lineStyle: { opacity: 0 }, symbol: "none",
+        areaStyle: { opacity: 0 }, silent: true },
+      { name: "range", type: "line", data: band_hi, stack: "band",
+        lineStyle: { opacity: 0 }, symbol: "none",
+        areaStyle: { color: hue, opacity: 0.16 }, silent: true },
+      { name: "average", type: "line", data: avg,
+        lineStyle: { color: hue, width: 2 }, symbol: "none",
+        emphasis: { disabled: true } }
+    ];
+
+    // Zero is worth marking when crossing it changes the meaning of the
+    // reading, which is a property of the measurement and not of a
+    // product: a counter only climbs, so zero is where it started and a
+    // line there says nothing, but for anything instantaneous - a
+    // pressure that can reverse, a flow, a power factor - the sign is
+    // the whole point. Same rule as the device page.
+    var lows = rows.map(function (r) { return r[2]; });
+    var marks = state.aggregation !== "counter"
+             && Math.min.apply(null, lows) <= 2;
+    if (marks) {
+      opt.series[2].markLine = {
+        silent: true, symbol: "none",
+        label: { formatter: "0", color: cssVar("--muted"), fontSize: 9 },
+        lineStyle: { color: cssVar("--critical"), type: "dashed", width: 1 },
+        data: [{ yAxis: 0 }]
+      };
+    }
+    if (elZeroKey) { elZeroKey.hidden = !marks; }
+
+    chart.setOption(opt, true);
+    renderTable();
+  }
+
+  // Every chart offers its numbers as a table: a chart cannot be read by
+  // a screen reader, copied into a report, or checked against a meter by
+  // hand, and somebody eventually needs all three.
+  function renderTable() {
+    if (elTable.hidden) { return; }
+    if (!state.rows.length) {
+      elTable.innerHTML = "<p class='foot-note'>Nothing to tabulate.</p>";
+      return;
+    }
+    var out = ["<table><thead><tr><th>Time</th><th class='num'>Average</th>",
+               "<th class='num'>Min</th><th class='num'>Max</th>",
+               "<th class='num'>Samples</th></tr></thead><tbody>"];
+    state.rows.slice().reverse().forEach(function (r) {
+      out.push("<tr><td>" + new Date(r[0]).toLocaleString() + "</td>"
+        + "<td class='num'>" + fmt(r[1]) + "</td>"
+        + "<td class='num'>" + fmt(r[2]) + "</td>"
+        + "<td class='num'>" + fmt(r[3]) + "</td>"
+        + "<td class='num'>" + r[4] + "</td></tr>");
+    });
+    out.push("</tbody></table>");
+    elTable.innerHTML = out.join("");
+  }
+
+  function load() {
+    var code = device();
+    if (!code) { empty("No device to trend."); return; }
+    elSubject.textContent = (elDevice.selectedOptions[0] || {}).textContent || code;
+    if (!state.param) { empty("This device reports nothing yet."); return; }
+    elSource.textContent = "loading…";
+    fetch("/api/trend?device=" + encodeURIComponent(code)
+          + "&param=" + encodeURIComponent(state.param)
+          + "&hours=" + hours())
+      .then(function (r) { return r.json(); })
+      .then(draw)
+      .catch(function (e) { empty("could not load the trend: " + e); });
+  }
+
+  elTabs.addEventListener("click", function (ev) {
+    var b = ev.target.closest("button[data-param]");
+    if (!b) { return; }
+    select(b);
+    load();
+  });
+  if (elDevice) {
+    elDevice.addEventListener("change", function () { buildTabs(); load(); });
+  }
+  if (elHours) { elHours.addEventListener("change", load); }
+
+  document.getElementById("trend-panel-toggle")
+    .addEventListener("click", function () {
+      elTable.hidden = !elTable.hidden;
+      this.textContent = elTable.hidden ? "Table view" : "Chart view";
+      host.parentElement.hidden = !elTable.hidden;
+      renderTable();
+      if (elTable.hidden) { chart.resize(); }
+    });
+
+  buildTabs();
+  load();
+});
+
+// Pagination over the rows already on the page.
+//
+// The same decision as the filter beside it: the rows are here, the set
+// is small enough to walk, and a round trip per page would be slower and
+// noisier than a loop. Page state lives in this closure rather than in
+// the DOM, because HTMX replaces the table every five seconds and
+// anything written into it would not survive.
+//
+// Hooks into the shell's filter by exporting a hook the shell calls after
+// it has decided which rows match - so there is one pass over the rows,
+// and the two features cannot disagree about which rows are visible.
+(function () {
+  var SIZE = 25;
+  var page = 1;
+
+  window.__paginate = function (matched) {
+    var pager = document.getElementById("pager");
+    var count = document.getElementById("row-count");
+    if (!pager || !count) { return; }
+
+    var pages = Math.max(1, Math.ceil(matched.length / SIZE));
+    if (page > pages) { page = pages; }
+    var from = (page - 1) * SIZE;
+    var to = Math.min(from + SIZE, matched.length);
+
+    matched.forEach(function (row, i) {
+      row.hidden = i < from || i >= to;
+    });
+
+    count.textContent = matched.length
+      ? "Showing " + (from + 1) + "–" + to + " of " + matched.length
+        + " device" + (matched.length === 1 ? "" : "s")
+      : "No devices to show";
+
+    // The buttons exist only when there is somewhere to go. The design
+    // draws three because its sample data has 248 devices; drawing three
+    // over eight would be scenery.
+    if (pages < 2) { pager.innerHTML = ""; return; }
+
+    var html = ['<button type="button" data-page="' + (page - 1) + '"'
+                + (page === 1 ? " disabled" : "") + ">Previous</button>"];
+    for (var p = 1; p <= pages; p++) {
+      html.push('<button type="button" data-page="' + p + '"'
+        + (p === page ? ' class="page-current" aria-current="true"' : "")
+        + ">" + p + "</button>");
+    }
+    html.push('<button type="button" data-page="' + (page + 1) + '"'
+      + (page === pages ? " disabled" : "") + ">Next</button>");
+    pager.innerHTML = html.join("");
+  };
+
+  // Reset to the first page whenever the filter changes, because page 4
+  // of a result set with one page is an empty table and reads as a bug.
+  window.__resetPage = function () { page = 1; };
+
+  document.addEventListener("click", function (ev) {
+    var b = ev.target.closest("#pager button[data-page]");
+    if (!b || b.disabled) { return; }
+    page = parseInt(b.dataset.page, 10);
+    if (window.__applyFilter) { window.__applyFilter(); }
+  });
+})();
+
+// The modal. One delegated pair of listeners from the document, so it
+// survives every HTMX swap of the button that opens it.
+(function () {
+  var open = null;
+
+  function show(id) {
+    var el = document.getElementById("modal-" + id);
+    if (!el) { return; }
+    el.hidden = false;
+    open = el;
+    var first = el.querySelector("[data-modal-close]");
+    if (first) { first.focus(); }
+  }
+  function hide() {
+    if (open) { open.hidden = true; open = null; }
+  }
+
+  document.addEventListener("click", function (ev) {
+    var opener = ev.target.closest("[data-modal]");
+    if (opener) { show(opener.dataset.modal); return; }
+    if (ev.target.closest("[data-modal-close]")) { hide(); return; }
+    // The backdrop itself, but not the dialog sitting on it.
+    if (open && ev.target === open) { hide(); }
+  });
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape" && open) { hide(); }
+  });
+})();
+</script>
 {% endblock %}

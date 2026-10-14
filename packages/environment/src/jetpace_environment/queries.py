@@ -114,3 +114,71 @@ def excursions(conn: psycopg.Connection, days: int = 7) -> list[dict]:
     with conn.cursor() as cur:
         cur.execute(EXCURSIONS, {"days": days})
         return cur.fetchall()
+
+
+# ---------------------------------------------------------------------------
+# excursion EPISODES, as distinct from excursion minutes
+#
+# EXCURSIONS above answers "how much of the last week was this room out of
+# spec", which is the figure a quality manager signs. This answers "when
+# did it happen", which is the figure an operator acts on - and they are
+# not the same question. Forty-one minutes below zero could be one door
+# held open or forty-one separate one-minute dips, and only the second is
+# a cascade that is failing.
+#
+# So consecutive samples below zero are collapsed into one episode: an
+# island of `below` rows between two rows that were in spec. The running
+# count of in-spec rows is what numbers the islands - a standard
+# gaps-and-islands shape, and the only part of this query that is not
+# obvious on sight.
+#
+# ONE ROW STANDS FOR ONE MINUTE, which is the same assumption EXCURSIONS
+# makes and is load-bearing in the same way: it holds only while every
+# pressure point is on a 1-minute scan class. When scan classes diverge
+# this has to become a real time difference between the island's ends.
+#
+# `ongoing` is whether the episode's last sample is also the room's last
+# sample. A room that is still reversed needs somebody now; a room that
+# recovered an hour ago is history, and the panel draws them differently.
+# ---------------------------------------------------------------------------
+
+EXCURSION_EPISODES = """
+WITH samples AS (
+    SELECT d.code, d.name, r.ts, r.value, (r.value <= 0) AS below
+    FROM   reading r
+    JOIN   device d    ON d.id = r.device_id AND d.retired_at IS NULL
+    JOIN   parameter p ON p.id = r.param AND p.key = 'dp'
+    WHERE  r.ts > now() - %(hours)s * interval '1 hour'
+),
+newest AS (
+    SELECT code, max(ts) AS ts FROM samples GROUP BY code
+),
+marked AS (
+    SELECT s.*,
+           count(*) FILTER (WHERE NOT s.below) OVER (
+               PARTITION BY s.code ORDER BY s.ts
+               ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+           ) AS island
+    FROM   samples s
+)
+SELECT m.code,
+       m.name,
+       min(m.ts)                        AS started,
+       max(m.ts)                        AS ended,
+       count(*)                         AS minutes,
+       round(min(m.value)::numeric, 1)  AS worst,
+       max(m.ts) = n.ts                 AS ongoing
+FROM   marked m
+JOIN   newest n ON n.code = m.code
+WHERE  m.below
+GROUP  BY m.code, m.name, m.island, n.ts
+ORDER  BY min(m.ts) DESC
+LIMIT  %(limit)s
+"""
+
+
+def excursion_episodes(conn: psycopg.Connection, hours: int = 24,
+                       limit: int = 8) -> list[dict]:
+    with conn.cursor() as cur:
+        cur.execute(EXCURSION_EPISODES, {"hours": hours, "limit": limit})
+        return cur.fetchall()

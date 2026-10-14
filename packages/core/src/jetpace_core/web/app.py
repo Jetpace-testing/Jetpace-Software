@@ -21,7 +21,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -110,6 +110,62 @@ def window_label(hours: float) -> str:
     if hours < 48:
         return f"last {hours:g} h"
     return f"last {hours / 24:g} days"
+
+
+# How many rows and how long a window an export may ask for. A day of a
+# 400-meter site is millions of readings, and an unbounded export is a
+# way to take the dashboard down from a URL.
+EXPORT_MAX_HOURS = 24 * 31
+EXPORT_MAX_ROWS = 2_000_000
+
+# The exports the reports panel offers. Windows rather than files,
+# because nothing is pre-generated.
+EXPORTS: tuple[tuple[str, str, str], ...] = (
+    ("Readings, last 24 hours",
+     "Every reading with its device, parameter, unit and quality flag",
+     "/export/readings.csv?hours=24"),
+    ("Readings, last 7 days",
+     "The same, over a week - large, and streamed",
+     "/export/readings.csv?hours=168"),
+    ("Device inventory",
+     "Every commissioned device, its gateway, model and register revision",
+     "/export/devices.csv"),
+)
+
+# The sparkline's coordinate space: the viewBox the template declares.
+SPARK_W, SPARK_H = 100.0, 24.0
+
+
+def sparkline(values: Sequence[float]) -> str:
+    """
+    A list of numbers as SVG polyline coordinates.
+
+    Normalised to its own range, which is the right choice for a mark
+    this small: a 24-pixel line scaled to an absolute axis would be flat
+    for most parameters and meaningless for the rest. It shows the SHAPE
+    of the day and nothing else, which is why the template marks it
+    presentational and prints the real range underneath.
+
+    A flat series draws down the middle rather than along the floor -
+    pinning it to y=0 would read as "it fell to zero", which is the one
+    thing a flat line definitely does not mean.
+    """
+    points = [float(v) for v in values if v is not None]
+    if not points:
+        return ""
+    if len(points) == 1:
+        return f"0,{SPARK_H / 2:.2f} {SPARK_W:.2f},{SPARK_H / 2:.2f}"
+
+    lo, hi = min(points), max(points)
+    span = hi - lo
+    step = SPARK_W / (len(points) - 1)
+    out = []
+    for i, v in enumerate(points):
+        # SVG y grows downward, so the subtraction is what puts a high
+        # reading at the top.
+        y = SPARK_H / 2 if span == 0 else SPARK_H * (1 - (v - lo) / span)
+        out.append(f"{i * step:.2f},{y:.2f}")
+    return " ".join(out)
 
 
 
@@ -233,6 +289,198 @@ def create_app(dsn: str,
                 for t in found)
         return collected
 
+    def product_events(conn) -> list[products_.Event]:
+        """
+        Each loaded product's own exceptions, for the panel on the
+        overview.
+
+        ISOLATED PER PRODUCT, for the same reason the tiles are: one
+        product's query failing must not blank the panel, and must not
+        vanish quietly either. A product that raises contributes one row
+        saying so, which is an exception in its own right - a product
+        that cannot tell you whether the plant is in spec is a fault
+        worth seeing on the first screen.
+        """
+        collected: list[products_.Event] = []
+        for product in products:
+            if product.events is None:
+                continue
+            try:
+                collected.extend(product.events(conn))
+            except Exception as exc:                   # noqa: BLE001
+                print(f"  {product.slug} events failed: {exc}", flush=True)
+                collected.append(products_.Event(
+                    when=None, kind="suspect", device=product.label,
+                    where="this product's own check",
+                    parameter="Exceptions", value="unavailable", limit="—",
+                    ongoing=True, detail=str(exc)[:120]))
+        return collected
+
+    def exceptions(conn, limit: int = 12) -> list[dict]:
+        """
+        Everything the overview can honestly call an exception.
+
+        THE SHELL'S TWO KINDS, plus whatever the loaded products
+        contribute. Core's are both facts about data arriving - a device
+        that has gone quiet, a sample the poller itself flagged - which
+        is the only kind of judgement the shared layer is entitled to
+        make. Anything measured against a specification needs the
+        specification, and that belongs to a product.
+
+        NEWEST FIRST, then capped. A site with two hundred silent devices
+        would otherwise push a live pressure excursion off the bottom of
+        a panel designed to show four rows, and the excursion is the one
+        somebody has to act on. Ongoing before recovered, for the same
+        reason.
+        """
+        rows: list[dict] = []
+
+        for s in queries.silence(conn, limit=limit):
+            age = s["age_s"]
+            rows.append({
+                "when": s["newest"], "kind": "silent",
+                "device": s["code"], "where": s["gateway"],
+                "parameter": "Connectivity",
+                "value": "no data",
+                # The threshold is the shell's, so the shell may name it.
+                "limit": "< 90 s",
+                "ongoing": True,
+                "detail": ("never reported" if age is None else
+                           f"silent for {age // 3600} h" if age >= 3600 else
+                           f"silent for {age // 60} min"),
+            })
+
+        for s in queries.suspect(conn, limit=limit):
+            value = s["value"]
+            rows.append({
+                "when": s["newest"], "kind": "suspect",
+                "device": s["code"], "where": s["gateway"],
+                "parameter": s["parameter"],
+                "value": ("—" if value is None else
+                          f"{float(value):,.{s['decimals']}f} {s['unit']}"),
+                "limit": "quality 0",
+                # A flagged sample is a thing that happened, not a state
+                # that persists; the newest one is as current as it gets.
+                "ongoing": False,
+                "detail": (f"{s['samples']} "
+                           + ("substituted" if s["worst"] == 1 else "suspect")
+                           + f" sample{'' if s['samples'] == 1 else 's'}"),
+            })
+
+        rows.extend({
+            "when": e.when, "kind": e.kind, "device": e.device,
+            "where": e.where, "parameter": e.parameter, "value": e.value,
+            "limit": e.limit, "ongoing": e.ongoing, "detail": e.detail,
+        } for e in product_events(conn))
+
+        # None sorts before any datetime, and a device that has NEVER
+        # reported is the oldest news there is - so an absent timestamp
+        # is treated as the beginning of time rather than crashing the
+        # comparison or floating to the top.
+        rows.sort(key=lambda r: (r["ongoing"],
+                                 r["when"].timestamp() if r["when"] else 0.0),
+                  reverse=True)
+        return rows[:limit]
+
+    def facility(conn) -> tuple[list[dict], dict]:
+        """
+        Devices grouped by the gateway they hang off, with a count per
+        state.
+
+        The gateway IS the grouping, not a stand-in for one: it is a
+        serial bus or a converter, which on a plant floor is an area. The
+        design's floor plan needs room coordinates, and there is no room
+        in this schema - see the note on FACILITY.
+        """
+        zones: dict[str, dict] = {}
+        counts = {"online": 0, "silent": 0, "never": 0}
+
+        for r in queries.facility(conn):
+            z = zones.setdefault(r["gateway"], {
+                "gateway": r["gateway"], "host": r["host"], "port": r["port"],
+                "enabled": r["enabled"], "site": r["site"], "devices": [],
+            })
+            if r["online"]:
+                marker, state, key = "normal", "online", "online"
+            elif r["newest"] is None:
+                marker, state, key = "warning", "never reported", "never"
+            else:
+                marker, state, key = "offline", "silent", "silent"
+            counts[key] += 1
+            z["devices"].append({"code": r["code"], "name": r["name"],
+                                 "marker": marker, "state": state})
+
+        return list(zones.values()), counts
+
+    def device_card(conn, code: str | None) -> dict:
+        """
+        One device's current values, with the shape of its day.
+
+        Two queries: what it reports now, and its hourly rollup for the
+        last 24 hours. The second is what draws the sparklines and gives
+        each card its observed range - from the rollup rather than from
+        raw readings, because a day of one device at a 2-second scan is
+        43,200 rows to draw a 24-pixel line.
+        """
+        if not code:
+            return {}
+        device = queries.device(conn, code)
+        if device is None:
+            return {}
+
+        shape = queries.device_shape(conn, code)
+        points = []
+        newest = None
+        online = False
+        suspect = False
+        for p in queries.device_points(conn, code):
+            s = shape.get(p["key"], {})
+            points.append({**p,
+                           "spark": sparkline(s.get("points", [])),
+                           "lo": s.get("lo"), "hi": s.get("hi")})
+            if newest is None or p["ts"] > newest:
+                newest = p["ts"]
+            online = online or bool(p["fresh"])
+            suspect = suspect or bool(p["quality"])
+
+        return {"device": device, "points": points, "newest": newest,
+                "online": online, "suspect": suspect}
+
+    def trend_points(rows) -> dict[str, list[dict]]:
+        """
+        Which parameters each device reports, for the trend panel's tabs.
+
+        Built from the rows the live table already has, so the tabs cost
+        no extra query and cannot disagree with the table above them.
+        """
+        return {
+            d["code"]: [{"key": p["param"], "label": p["param_label"],
+                         "unit": p["unit"], "decimals": p["decimals"],
+                         "aggregation": p["aggregation"]}
+                        for p in d["points"]]
+            for d in rows
+        }
+
+    def initial_device(rows) -> str | None:
+        """
+        Which device the trend panel and the device card start on.
+
+        A DEVICE THAT IS ANSWERING, if there is one. The obvious choice
+        is the first row, and on this prototype the first row is a demo
+        device that stopped reporting four days ago - so the first screen
+        opens on an empty chart saying "nothing recorded", which reads as
+        a broken panel rather than as a quiet instrument. Any real site
+        with a decommissioned device at the top of the alphabet has the
+        same problem.
+
+        Falling back to the first row when nothing is online, because an
+        empty chart is still better than an empty select.
+        """
+        for r in rows:
+            if r["online"]:
+                return r["code"]
+        return rows[0]["code"] if rows else None
+
     def rows_for_live(conn):
         """Group the flat live query into one entry per device."""
         by_device: dict[str, dict] = {}
@@ -261,10 +509,24 @@ def create_app(dsn: str,
         Those moved to /environment and /energy.
         """
         with queries.connect(dsn) as conn:
+            rows = rows_for_live(conn)
+            zones, counts = facility(conn)
+            first = initial_device(rows)
             return templates.TemplateResponse(request, "index.html", {
                 "summary": queries.summary(conn),
-                "devices": rows_for_live(conn),
+                "devices": rows,
                 "product_tiles": product_tiles(conn),
+                "distribution": queries.distribution(conn),
+                "zones": zones,
+                "counts": counts,
+                "site_label": zones[0]["site"] if zones else None,
+                "card": device_card(conn, first),
+                "selected": first,
+                "trend_points": trend_points(rows),
+                "events": exceptions(conn),
+                "ranges": RANGES,
+                "exports": [{"label": a, "note": b, "href": c}
+                            for a, b, c in EXPORTS],
             })
 
     # The product views used to be four routes here - /environment,
@@ -275,13 +537,158 @@ def create_app(dsn: str,
 
     @app.get("/partials/live", response_class=HTMLResponse)
     def partial_live(request: Request):
-        """Polled by HTMX. Returns only the table body and the summary row."""
+        """
+        Polled by HTMX. Refreshes four panels on one request.
+
+        The device table is the swap target; the figures, the facility
+        panel and the distribution donut come back as out-of-band swaps,
+        because the design puts them in cells that are not siblings and
+        there is a chart between them that must not be replaced. One
+        request rather than four - see _live_push.html.
+        """
         with queries.connect(dsn) as conn:
-            return templates.TemplateResponse(request, "_live.html", {
+            zones, counts = facility(conn)
+            return templates.TemplateResponse(request, "_live_push.html", {
                 "summary": queries.summary(conn),
                 "devices": rows_for_live(conn),
                 "product_tiles": product_tiles(conn),
+                "distribution": queries.distribution(conn),
+                "zones": zones,
+                "counts": counts,
+                "site_label": zones[0]["site"] if zones else None,
             })
+
+    @app.get("/partials/device-card", response_class=HTMLResponse)
+    def partial_device_card(request: Request, code: str | None = None):
+        """
+        The selected-device panel.
+
+        `code` arrives from the trend panel's select - on change, and on
+        this panel's own poll through hx-include, so a refresh keeps the
+        selection rather than snapping back to the first device. An
+        unknown or absent code renders the panel's empty state rather
+        than a 404, because this is a fragment inside a page that is
+        otherwise fine.
+        """
+        with queries.connect(dsn) as conn:
+            if not code:
+                code = initial_device(rows_for_live(conn))
+            return templates.TemplateResponse(request, "_device_card.html", {
+                "card": device_card(conn, code),
+            })
+
+    @app.get("/partials/exceptions", response_class=HTMLResponse)
+    def partial_exceptions(request: Request):
+        """
+        The exceptions panel.
+
+        Polled more slowly than the live table - every 30 seconds rather
+        than every 5 - because the suspect-sample query is the only scan
+        on this page. See the note on queries.SUSPECT.
+        """
+        with queries.connect(dsn) as conn:
+            return templates.TemplateResponse(request, "_exceptions.html", {
+                "events": exceptions(conn),
+            })
+
+    # --- exports -------------------------------------------------------
+    #
+    # The reports panel's rows. Nothing is pre-generated and nothing is
+    # stored: each of these runs a query and streams the answer out.
+    #
+    # NO AUTHENTICATION, because this application has none yet - these
+    # are exactly as reachable as every page beside them, which is to say
+    # reachable by anyone who can reach the port. That is why the web
+    # process binds 127.0.0.1 by default. Login is §10 and these routes
+    # go behind it with the rest.
+
+    def csv_line(values) -> str:
+        """
+        One CSV row.
+
+        Quoting by hand rather than through the csv module because the
+        output is streamed: csv.writer wants a file object, and wrapping
+        a generator in StringIO to satisfy it would buffer the whole
+        export - which is the one thing streaming exists to avoid.
+        """
+        out = []
+        for v in values:
+            if v is None:
+                out.append("")
+                continue
+            s = str(v)
+            if any(c in s for c in ',"\n\r'):
+                s = '"' + s.replace('"', '""') + '"'
+            out.append(s)
+        return ",".join(out) + "\r\n"
+
+    @app.get("/export/readings.csv")
+    def export_readings(hours: float = 24.0):
+        """
+        Readings for a window, streamed.
+
+        BOUNDED IN BOTH DIRECTIONS. The window is clamped and the row
+        count is capped, because a day of a 400-meter site is millions of
+        rows and an unbounded export is a way to take the dashboard down
+        from a URL. When the cap bites, the file says so in a trailing
+        comment - a truncated export that looks complete is worse than
+        one that refuses.
+        """
+        window = max(MIN_HOURS, min(float(hours), EXPORT_MAX_HOURS))
+
+        def rows():
+            # The connection is opened INSIDE the generator and closed by
+            # it. A server-side cursor only lives as long as its
+            # transaction, so a connection opened in the handler and
+            # closed on return would hand the browser an empty file.
+            with queries.connect(dsn) as conn:
+                yield csv_line(["# jetpace readings export",
+                                f"window={window:g}h",
+                                f"cap={EXPORT_MAX_ROWS}",
+                                "timestamps are UTC as stored"])
+                yield csv_line(["ts", "device", "device_name", "gateway",
+                                "parameter", "unit", "value", "quality"])
+                n = 0
+                with queries.export_readings(conn, window,
+                                             EXPORT_MAX_ROWS) as cur:
+                    for r in cur:
+                        n += 1
+                        yield csv_line([r["ts"].isoformat(), r["device"],
+                                        r["device_name"], r["gateway"],
+                                        r["parameter"], r["unit"],
+                                        r["value"], r["quality"]])
+                if n >= EXPORT_MAX_ROWS:
+                    yield csv_line([f"# TRUNCATED at {n} rows; "
+                                    f"ask for a shorter window"])
+                else:
+                    yield csv_line([f"# {n} rows"])
+
+        return StreamingResponse(
+            rows(), media_type="text/csv",
+            headers={"Content-Disposition":
+                     f'attachment; filename="readings-{window:g}h.csv"'})
+
+    @app.get("/export/devices.csv")
+    def export_devices():
+        """The commissioned fleet. Small enough to build in one pass."""
+        with queries.connect(dsn) as conn:
+            rows = queries.export_devices(conn)
+
+        head = ["code", "name", "gateway", "host", "port", "unit_id",
+                "model", "model_revision", "vendor", "kind", "site",
+                "scan_class", "commissioned_at"]
+        body = [csv_line(["# jetpace device inventory",
+                          f"devices={len(rows)}"]), csv_line(head)]
+        for r in rows:
+            when = r["commissioned_at"]
+            body.append(csv_line(
+                [r[k] if k != "commissioned_at" else
+                 (when.isoformat() if when else "") for k in head]))
+
+        return StreamingResponse(
+            iter(body), media_type="text/csv",
+            headers={"Content-Disposition":
+                     'attachment; filename="devices.csv"'})
 
     # --- the device list and one device --------------------------------
 

@@ -1,124 +1,196 @@
-{# Polled by HTMX every few seconds. Contains the summary tiles and the
-   live table, which are the only parts that change on their own. #}
+{# Polled by HTMX. The figures and the table are the only parts that
+   change on their own, so they are the only parts that get re-fetched.
 
-{# Only tiles that mean something for any product. Rooms in spec and
-   excursion minutes moved to /environment: they are meaningless to a
-   customer who bought the energy product, and showing them a permanent
-   "0 of 0" is worse than not showing them. #}
-{# The shell's own figures: true of any product, on every install. #}
-<dl class="tiles">
-  <div class="tile">
-    <dt>Devices online</dt>
-    <dd>{{ summary.online or 0 }} <small>of {{ summary.devices or 0 }}</small></dd>
-  </div>
-  {% set offline = (summary.devices or 0) - (summary.online or 0) %}
-  <div class="tile{{ ' alarm' if offline }}">
-    <dt>Silent</dt>
-    <dd>{{ offline }}</dd>
-  </div>
-  <div class="tile">
-    <dt>Points reporting</dt>
-    <dd>{{ '{:,}'.format(summary.online_points or 0) }}</dd>
-  </div>
-  <div class="tile">
-    <dt>Readings, 24 h</dt>
-    <dd>{{ '{:,}'.format(summary.readings_24h or 0) }}</dd>
-  </div>
-  <div class="tile">
-    <dt>Newest reading</dt>
-    <dd>{% if summary.newest %}{{ summary.newest.strftime('%H:%M:%S') }}
-        {% else %}<span class="dim">none</span>{% endif %}</dd>
-  </div>
-</dl>
+   Laid out as the Figma Make design lays them out: a row of KPI cards,
+   the first one filled, then a panel carrying a heading, a filter
+   toolbar and the live table. #}
 
-{# And then whatever the products on this install contribute. An
-   environment customer gets rooms in spec and pressure here; an energy
-   customer gets consumption. The shell does not know which it is
-   rendering - the value arrives already formatted, because the product
-   is what knows that a pressure is pascals to one decimal place.
+{% import "_icons.html" as ico %}
 
-   A separate row rather than one long one: these answer a different
-   question from the figures above, and mixing them makes a seven-across
-   grid where nothing has priority. #}
-{% if product_tiles %}
-  <dl class="tiles product">
-    {% for t in product_tiles %}
-      <div class="tile{{ ' ' ~ t.state if t.state }}">
-        <dt>{{ t.label }}</dt>
-        <dd>{{ t.value }}{% if t.small %} <small>{{ t.small }}</small>{% endif %}</dd>
+{% set offline = (summary.devices or 0) - (summary.online or 0) %}
+
+<section class="kpi-grid" aria-label="Key figures">
+
+  {# The design's first four are the shell's own and true of any product.
+     Its fourth is Active Alarms; there is no alarm model in the schema -
+     not a card, a subsystem - so the slot carries what this install can
+     actually answer for rather than a number nobody could defend. #}
+  <article class="kpi-card featured">
+    <div class="kpi-icon blue">{{ ico.icon('device') }}</div>
+    <div class="kpi-copy">
+      <span>Total Devices</span>
+      <strong>{{ summary.devices or 0 }}</strong>
+      <small>commissioned</small>
+    </div>
+  </article>
+
+  <article class="kpi-card">
+    <div class="kpi-icon green">{{ ico.icon('wifi') }}</div>
+    <div class="kpi-copy">
+      <span>Online Devices</span>
+      <strong>{{ summary.online or 0 }}</strong>
+      <small>{% if summary.devices %}{{
+        '%.1f' | format(100 * (summary.online or 0) / summary.devices)
+      }}% connected{% else %}none commissioned{% endif %}</small>
+    </div>
+  </article>
+
+  <article class="kpi-card">
+    <div class="kpi-icon gray">{{ ico.icon('activity') }}</div>
+    <div class="kpi-copy">
+      <span>Offline Devices</span>
+      <strong>{{ offline }}</strong>
+      <small{{ ' class="danger-text"' | safe if offline }}>
+        {{ 'not reporting' if offline else 'all reporting' }}</small>
+    </div>
+  </article>
+
+  <article class="kpi-card">
+    <div class="kpi-icon teal">{{ ico.icon('trend') }}</div>
+    <div class="kpi-copy">
+      <span>Readings, 24 h</span>
+      <strong>{{ '{:,}'.format(summary.readings_24h or 0) }}</strong>
+      <small>{% if summary.newest %}newest {{ summary.newest.strftime('%H:%M:%S') }}
+             {% else %}none yet{% endif %}</small>
+    </div>
+  </article>
+
+  {# And then whatever the products on this install contribute. The
+     design's remaining three are average temperature, humidity and
+     differential pressure - all product knowledge, none of it something
+     the shell may name. An environment install fills these; an energy
+     one fills different ones; an install with neither shows four cards
+     and no gap. #}
+  {% for t in product_tiles or [] %}
+    <article class="kpi-card">
+      <div class="kpi-icon {{ t.tone }}">{{ ico.icon(t.icon) }}</div>
+      <div class="kpi-copy">
+        <span>{{ t.label }}</span>
+        <strong>{{ t.value }}{% if t.small %} <small>{{ t.small }}</small>{% endif %}</strong>
+        <small{{ ' class="danger-text"' | safe if t.state == 'alarm' }}>
+          {{ 'attention' if t.state == 'alarm' else ('in range' if t.state == 'good' else '') }}</small>
       </div>
-    {% endfor %}
-  </dl>
-{% endif %}
+    </article>
+  {% endfor %}
+</section>
 
-<section>
-  <h2>Live
-    <span class="hint">refreshes by itself</span>
-  </h2>
-  <div class="card tablewrap">
+<section class="panel">
+  <div class="panel-heading">
+    <div>
+      <h2>Live Device Monitoring</h2>
+      <p>Real-time sensor readings and connectivity</p>
+    </div>
+  </div>
+
+  <div class="table-toolbar">
+    <label class="table-search">
+      {{ ico.icon('search', 16) }}
+      {# hx-preserve: this partial is replaced every few seconds, and a
+         search box that empties itself mid-keystroke is worse than no
+         search box. HTMX keeps the node rather than the markup. #}
+      <input type="search" id="device-filter" hx-preserve="true"
+             placeholder="Search devices…" aria-label="Search devices">
+    </label>
+    <label class="select-wrap">
+      <span class="sr-only">Connectivity filter</span>
+      <select id="state-filter" hx-preserve="true" aria-label="Connectivity filter">
+        <option value="">All statuses</option>
+        <option value="online">Online</option>
+        <option value="silent">Offline</option>
+      </select>
+      {{ ico.icon('chevron', 13) }}
+    </label>
+  </div>
+
+  <div class="table-scroll">
     <table>
       <thead>
         <tr>
           <th>Device</th>
-          <th>Name</th>
-          <th>Gateway</th>
-          <th class="num">Unit</th>
-          <th class="num">Reading</th>
-          <th>State</th>
-          <th class="num">Age</th>
+          <th>Location</th>
+          <th>Reading</th>
+          <th>Connectivity</th>
+          <th>Alarm</th>
+          <th>Last Update</th>
         </tr>
       </thead>
       <tbody>
-        {# The reading is formatted from the parameter's OWN unit and
-           decimals, not from a list of keys this template knows about.
-           It used to say `if dp then Pa elif kwh_import then kWh`, which
-           meant a particle counter or a BTU meter would have shown an
-           em dash - the shared table silently knowing two products and
-           no others. #}
+        {# The design's table has a column per parameter - temperature,
+           humidity, differential pressure - because its sample data has
+           all three on every device. Real instruments do not: a pressure
+           transmitter reports pressure, a meter reports energy. So the
+           reading column is driven by the parameter each device actually
+           has, with its own unit and decimals, and a device with more
+           than one says so rather than inventing columns that would be
+           empty on every row.
+
+           ALARM is derived from what the system genuinely knows -
+           silence, and a substituted or suspect sample. It is not an
+           alarm engine; there is none. A real one is §10 work. #}
         {% for d in devices %}
           {% set first = d.points | first %}
-          <tr>
-            {# The class belongs on the ANCHOR, as it does in
-               _devices.html. On the cell it styled the cell and left the
-               link to the browser, so the same device code was ours on
-               /devices and default-browser-blue here. #}
-            <td><a class="code" href="/devices/{{ d.code }}">{{ d.code }}</a></td>
-            <td>{{ d.name }}</td>
-            <td class="dim">{{ d.gateway }}</td>
-            <td class="num dim">{{ d.unit_id }}</td>
-            <td class="num">
+          {% set suspect = d.points | selectattr('quality') | list %}
+          <tr data-device="{{ d.code }}|{{ d.name }}|{{ d.gateway }}"
+              data-state="{{ 'online' if d.online else 'silent' }}">
+            <td>
+              <a class="device-link" href="/devices/{{ d.code }}">
+                <span class="device-mini">{{ ico.icon('device', 15) }}</span>
+                <span><strong>{{ d.code }}</strong><small>{{ d.name }}</small></span>
+              </a>
+            </td>
+            <td>
+              <span class="location-cell">{{ ico.icon('location', 14) }}{{ d.gateway }}</span>
+            </td>
+            <td>
               {% if first %}
                 {{ '{:,.{}f}'.format(first.value, first.decimals) }}
                 <span class="dim">{{ first.unit }}</span>
                 {% if d.points | length > 1 %}
                   <span class="dim">+{{ d.points | length - 1 }}</span>
                 {% endif %}
+              {% else %}&mdash;{% endif %}
+            </td>
+            <td>
+              {% if d.online %}
+                <span class="status-badge normal"><span class="status-dot"></span>Online</span>
               {% else %}
-                &mdash;
+                <span class="status-badge offline"><span class="status-dot"></span>Offline</span>
               {% endif %}
             </td>
             <td>
-              {# Online or not is all the shared table can honestly say.
-                 "In spec" is a judgement about a pressure cascade and
-                 lives on /environment, where the limits are known. #}
-              {% if d.online %}
-                <span class="pill good">online</span>
+              {% if not d.online %}
+                <span class="status-badge offline"><span class="status-dot"></span>Unknown</span>
+              {% elif suspect %}
+                <span class="status-badge warning"><span class="status-dot"></span>Suspect</span>
               {% else %}
-                <span class="pill critical">silent</span>
+                <span class="status-badge normal"><span class="status-dot"></span>Normal</span>
               {% endif %}
             </td>
-            <td class="num dim">
+            <td class="updated">
               {% if d.age_s is none %}&mdash;
-              {% elif d.age_s < 90 %}{{ d.age_s }} s
-              {% elif d.age_s < 3600 %}{{ (d.age_s // 60) }} min
-              {% else %}{{ (d.age_s // 3600) }} h{% endif %}
+              {% elif d.age_s < 90 %}{{ d.age_s }} sec ago
+              {% elif d.age_s < 3600 %}{{ (d.age_s // 60) }} min ago
+              {% else %}{{ (d.age_s // 3600) }} h ago{% endif %}
             </td>
           </tr>
         {% else %}
-          <tr><td colspan="7" class="dim">
-            No readings yet. Start the simulator and the poller.
+          <tr><td colspan="6">
+            <div class="empty-state">
+              <strong>No readings yet</strong>
+              <span>Start the simulator and the poller.</span>
+            </div>
           </td></tr>
         {% endfor %}
+        {# Revealed by the filter when it has hidden every row. A table
+           that simply ends looks like a system with no devices, which is
+           a different and much more alarming thing than a search that
+           matched nothing. #}
+        <tr id="filtered-empty" hidden><td colspan="6">
+          <div class="empty-state">
+            <strong>No device matches</strong>
+            <span>Clear the search or the status filter.</span>
+          </div>
+        </td></tr>
       </tbody>
     </table>
   </div>

@@ -95,15 +95,15 @@ def tiles(conn) -> list[Tile]:
     average = summary.get("avg_dp")
 
     return [
-        Tile(label="Rooms in spec",
+        Tile(label="Rooms in spec", icon="shield", tone="green",
              value=str(in_spec),
              small=f"of {total}",
              # No rooms is not a failure, it is an uncommissioned site.
              state="" if not total else ("good" if in_spec == total else "alarm")),
-        Tile(label="Excursion minutes, 24 h",
+        Tile(label="Excursion minutes, 24 h", icon="alarm", tone="red",
              value=f"{excursions:,}",
              state="alarm" if excursions else ("good" if total else "")),
-        Tile(label="Average pressure",
+        Tile(label="Avg. Diff. Pressure", icon="pressure", tone="amber",
              value="—" if average is None else f"{float(average):,.1f}",
              small="" if average is None else "Pa"),
     ]

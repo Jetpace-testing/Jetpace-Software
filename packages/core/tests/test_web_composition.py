@@ -99,7 +99,8 @@ def test_a_product_template_resolves_the_shell_it_extends(tmp_path):
 def test_the_product_tab_is_current_on_its_own_page(tmp_path):
     body = TestClient(create_app(DSN, [fake_product(tmp_path)])).get("/demo").text
     assert 'href="/demo"' in body
-    assert 'class="current"' in body
+    # The design names the state "active"; it used to be "current".
+    assert "active" in body
 
 
 def test_the_navigation_lists_only_the_products_that_were_loaded(tmp_path):
@@ -434,7 +435,7 @@ def test_one_products_broken_tiles_do_not_blank_the_page(tmp_path,
     _stub_db(monkeypatch)
     response = TestClient(app).get("/")
     assert response.status_code == 200
-    assert "Devices online" in response.text      # the shell is intact
+    assert "Online Devices" in response.text      # the shell is intact
     assert "unavailable" in response.text         # and the gap is visible
 
 

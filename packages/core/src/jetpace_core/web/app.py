@@ -224,11 +224,12 @@ def create_app(dsn: str,
             except Exception as exc:                   # noqa: BLE001
                 print(f"  {product.slug} tiles failed: {exc}", flush=True)
                 collected.append({"label": product.label, "state": "alarm",
-                                  "value": "unavailable", "small": ""})
+                                  "value": "unavailable", "small": "",
+                                  "icon": "alarm", "tone": "red"})
                 continue
             collected.extend(
-                {"label": t.label, "value": t.value,
-                 "small": t.small, "state": t.state}
+                {"label": t.label, "value": t.value, "small": t.small,
+                 "state": t.state, "icon": t.icon, "tone": t.tone}
                 for t in found)
         return collected
 

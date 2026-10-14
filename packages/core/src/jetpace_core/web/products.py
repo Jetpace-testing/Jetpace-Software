@@ -93,12 +93,24 @@ class Tile:
     value: str
     small: str = ""
     state: str = ""
+    # The design gives every figure an icon and a tinted icon badge.
+    # Both are names from the shell's own sets, not free-form: a product
+    # chooses from what the design draws rather than introducing a
+    # seventh colour or an icon nobody else has.
+    icon: str = "gauge"
+    tone: str = "blue"
+
+    TONES = ("blue", "green", "gray", "red", "teal", "amber")
 
     def __post_init__(self) -> None:
         if self.state not in ("", "good", "alarm"):
             raise ValueError(
                 f"tile {self.label!r} has state {self.state!r}; the shell "
                 f"knows '', 'good' and 'alarm' and nothing else.")
+        if self.tone not in Tile.TONES:
+            raise ValueError(
+                f"tile {self.label!r} asks for tone {self.tone!r}; the "
+                f"design has {', '.join(Tile.TONES)} and no others.")
 
 
 @dataclass(frozen=True)

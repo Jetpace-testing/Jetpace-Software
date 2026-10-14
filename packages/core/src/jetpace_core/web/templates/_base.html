@@ -64,100 +64,159 @@
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
-<div class="shell">
 
-  {# The navigation moved from a strip across the top to a column down the
-     side. Four items fitted across the top; alarms, reports, settings and
-     users will not, and a nav that has to scroll sideways is a nav nobody
-     reads. #}
-  <aside class="side">
-    <a class="brand" href="/">Jetpace</a>
+{% import "_icons.html" as ico %}
 
-    {# The block has to be DEFINED here for a child to override it, and
-       wherever it is defined it renders. Inside a comment, so reading it
-       with self.nav() below costs nothing visible - and the comment is
-       worth having anyway when someone views source to ask which page they
-       are on. #}
+{# The design's nav. Nine items, and we have built three of them.
+   
+   The six that do not exist are rendered - the design has them, and a
+   sidebar that silently drops two thirds of itself is not the design -
+   but they are not links. A nav item that 404s is worse than one that is
+   visibly not ready yet, and this is the same judgement that kept an
+   Energy tab off a cleanroom customer's screen.
+   
+   `built` carries the slug a page announces with {% raw %}{% block nav %}{% endraw %}, so the
+   current item is still matched the same way it always was. #}
+{% set shell_nav = [
+     {"label": "Home",             "icon": "home",     "href": "/",        "slug": "overview"},
+     {"label": "Live Monitoring",  "icon": "activity", "href": "",         "slug": ""},
+     {"label": "Devices",          "icon": "device",   "href": "/devices", "slug": "devices"},
+     {"label": "Map & Locations",  "icon": "map",      "href": "",         "slug": ""},
+     {"label": "Trends & Analysis","icon": "trend",    "href": "",         "slug": ""},
+   ] %}
+{% set tail_nav = [
+     {"label": "Reports",         "icon": "report",   "href": "", "slug": ""},
+     {"label": "Alarms",          "icon": "alarm",    "href": "", "slug": ""},
+     {"label": "User Management", "icon": "users",    "href": "", "slug": ""},
+     {"label": "Settings",        "icon": "settings", "href": "", "slug": ""},
+   ] %}
+
+<div class="app-shell">
+
+  <aside class="sidebar">
+    <a class="brand" href="/">
+      <div class="brand-mark"><span></span><span></span><span></span><span></span></div>
+      <div>
+        <strong>JETPACE</strong>
+        <small>{{ site_name or 'Test and Measurement' }}</small>
+      </div>
+    </a>
+
     <!-- section: {% block nav %}{% endblock %} -->
-    <nav class="nav" aria-label="Sections">
+    <nav aria-label="Main navigation">
       {% set here = self.nav() | trim %}
-      {# No group heading. The reference this is modelled on has two -
-         MENU and GENERAL - because it has two groups; we have one, and a
-         heading over a single group is decoration. The second group
-         arrives with the first page that belongs in it, and not before:
-         shipping a Settings link to a page that does not exist is the
-         same mistake as the Energy tab a cleanroom customer could not
-         use. #}
-      <a href="/"        class="{{ 'current' if here == 'overview' }}">Overview</a>
-      <a href="/devices" class="{{ 'current' if here == 'devices' }}">Devices</a>
-      {# The products this install actually serves, in the order core loaded
-         them. These were two literal links, Environment and Energy, which
-         meant a customer who had bought one had a tab for the other that
-         led to a 404 - and the shell naming a product was the coupling §3
-         exists to remove. A page says which tab it is with
-         `{% block nav %}<slug>{% endblock %}`, matched here against the
-         slug, so nothing has to be kept in step by hand. #}
+      <p class="nav-label">Workspace</p>
+
+      {% macro nav_entry(item) %}
+        {% if item.href %}
+          <a class="nav-item{{ ' active' if here == item.slug }}" href="{{ item.href }}">
+            {{ ico.icon(item.icon) }}<span>{{ item.label }}</span>
+          </a>
+        {% else %}
+          <span class="nav-item unbuilt" aria-disabled="true"
+                title="Not built yet">
+            {{ ico.icon(item.icon) }}<span>{{ item.label }}</span>
+          </span>
+        {% endif %}
+      {% endmacro %}
+
+      {% for item in shell_nav %}{{ nav_entry(item) }}{% endfor %}
+
+      {# The products this install actually serves, between the shell's
+         own entries exactly where the design puts its product sections.
+         A customer who bought one product gets one of these. #}
       {% for p in products or [] %}
-        <a href="/{{ p.slug }}"
-           class="{{ 'current' if here == p.slug }}">{{ p.label }}</a>
+        <a class="nav-item{{ ' active' if here == p.slug }}" href="/{{ p.slug }}">
+          {{ ico.icon('gauge') }}<span>{{ p.label }}</span>
+        </a>
       {% endfor %}
+
+      {% for item in tail_nav %}{{ nav_entry(item) }}{% endfor %}
     </nav>
 
-    <div class="side-foot">
-      <span class="site">{{ site_name or 'Prototype site' }}</span>
-      <span class="dim">{{ version or '' }}</span>
+    <div class="system-health">
+      <div class="health-icon">{{ ico.icon('shield', 18) }}</div>
+      <div>
+        <strong>System Health</strong>
+        <span><i></i>{{ version or 'Running' }}</span>
+      </div>
     </div>
   </aside>
 
-  <main class="main" id="main">
+  <main id="main">
+    <header class="topbar">
+      <div class="page-title">
+        <span>Overview</span>
+        <strong>{% block page_title %}{% endblock %}</strong>
+      </div>
 
-    {# A page says what it is here rather than inside its own content, so
-       every screen opens the same way and the heading levels stay honest:
-       one h1 per page, and the section h2s below it mean what they say. #}
-    <!-- lede: {% block page_lede %}{% endblock %} -->
-    <header class="top">
-      <div class="titles">
-        <h1>{% block page_title %}{% endblock %}</h1>
-        {% set lede = self.page_lede() | trim %}
-        {% if lede %}<p class="lede">{{ lede }}</p>{% endif %}
+      <label class="global-search">
+        {{ ico.icon('search', 17) }}
+        <input type="search" placeholder="Search device ID, location or parameter…"
+               aria-label="Search">
+      </label>
+
+      <div class="header-date">
+        {{ ico.icon('clock', 16) }}
+        <div>
+          <span id="today"></span>
+          <strong class="clock" id="clock"></strong>
+        </div>
       </div>
-      <div class="topright">
-        <span class="clock" id="clock"></span>
-        {# Three icons in the markup, one shown by CSS according to
-           data-theme. No JavaScript decides which - it cannot be wrong
-           about the state because it is not consulted. #}
-        <button class="themer" type="button" id="theme">
-          <svg class="i-auto" viewBox="0 0 16 16" width="14" height="14"
-               aria-hidden="true" focusable="false">
-            <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor"
-                    stroke-width="1.4"/>
-            <path fill="currentColor" d="M8 2a6 6 0 0 1 0 12z"/>
-          </svg>
-          <svg class="i-light" viewBox="0 0 16 16" width="14" height="14"
-               aria-hidden="true" focusable="false">
-            <circle cx="8" cy="8" r="3.2" fill="currentColor"/>
-            <g stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
-              <path d="M8 1v1.7M8 13.3V15M1 8h1.7M13.3 8H15M3.05 3.05l1.2 1.2
-                       M11.75 11.75l1.2 1.2M12.95 3.05l-1.2 1.2
-                       M4.25 11.75l-1.2 1.2"/>
-            </g>
-          </svg>
-          <svg class="i-dark" viewBox="0 0 16 16" width="14" height="14"
-               aria-hidden="true" focusable="false">
-            <path fill="currentColor"
-                  d="M13.2 10.3A5.6 5.6 0 0 1 5.7 2.8a5.8 5.8 0 1 0 7.5 7.5z"/>
-          </svg>
-          <span class="themer-label">Auto</span>
-        </button>
-      </div>
+
+      {# Three icons in the markup, one shown by CSS from data-theme. No
+         script decides which, so none can disagree with the stylesheet. #}
+      <button class="themer" type="button" id="theme">
+        <svg class="i-auto" viewBox="0 0 16 16" width="15" height="15"
+             aria-hidden="true" focusable="false">
+          <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.4"/>
+          <path fill="currentColor" d="M8 2a6 6 0 0 1 0 12z"/>
+        </svg>
+        <svg class="i-light" viewBox="0 0 16 16" width="15" height="15"
+             aria-hidden="true" focusable="false">
+          <circle cx="8" cy="8" r="3.2" fill="currentColor"/>
+          <g stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+            <path d="M8 1v1.7M8 13.3V15M1 8h1.7M13.3 8H15M3.05 3.05l1.2 1.2
+                     M11.75 11.75l1.2 1.2M12.95 3.05l-1.2 1.2M4.25 11.75l-1.2 1.2"/>
+          </g>
+        </svg>
+        <svg class="i-dark" viewBox="0 0 16 16" width="15" height="15"
+             aria-hidden="true" focusable="false">
+          <path fill="currentColor"
+                d="M13.2 10.3A5.6 5.6 0 0 1 5.7 2.8a5.8 5.8 0 1 0 7.5 7.5z"/>
+        </svg>
+        <span class="themer-label">Auto</span>
+      </button>
+
+      <button class="profile" type="button">
+        <div class="avatar">JP</div>
+        <div><strong>Operator</strong><span>Signed out</span></div>
+        {{ ico.icon('chevron', 14) }}
+      </button>
     </header>
 
-    {% block content %}{% endblock %}
+    <div class="content">
+      <!-- lede: {% block page_lede %}{% endblock %} -->
+      <!-- heading: {% block page_heading %}{% endblock %} -->
+      <div class="welcome-row">
+        <div>
+          {# Falls back to the breadcrumb when a page has nothing else to
+             say, so a new page is never headingless. #}
+          <h1>{{ self.page_heading() | trim or self.page_title() | trim }}</h1>
+          {% set lede = self.page_lede() | trim %}
+          {% if lede %}<p>{{ lede }}</p>{% endif %}
+        </div>
+        <div class="live-state"><i></i>Live data
+          <span>refreshes by itself</span></div>
+      </div>
 
-    <footer class="foot">
-      <span>Readings are stored in UTC and shown in {{ timezone or 'Asia/Kolkata' }}.</span>
-    </footer>
+      {% block content %}{% endblock %}
 
+      <footer class="foot">
+        <span>Readings are stored in UTC and shown in {{ timezone or 'Asia/Kolkata' }}.</span>
+        <span>{{ version or '' }}</span>
+      </footer>
+    </div>
   </main>
 
 </div>
@@ -168,11 +227,60 @@
 // dark mode use the same code and the palette has exactly one home.
 (function () {
   function tick() {
-    var el = document.getElementById("clock");
-    if (el) el.textContent = new Date().toLocaleTimeString();
+    var now = new Date();
+    var clock = document.getElementById("clock");
+    var today = document.getElementById("today");
+    if (clock) clock.textContent = now.toLocaleTimeString();
+    if (today) today.textContent = now.toLocaleDateString(undefined,
+      { weekday: "long", day: "numeric", month: "long" });
   }
   tick();
   setInterval(tick, 1000);
+})();
+
+// The live table's filters.
+//
+// DELEGATED FROM HERE, not wired inside the table. HTMX replaces that
+// whole block every few seconds, which would throw away any listener
+// attached to it - and re-attaching on every swap is how you end up with
+// eight copies of the same handler. The document outlives the swaps.
+//
+// Filtering in the browser rather than the query: the rows are already
+// on the page, the set is small enough to scan, and a round trip per
+// keystroke would be slower and noisier than a loop.
+(function () {
+  function apply() {
+    var search = document.getElementById("device-filter");
+    var state = document.getElementById("state-filter");
+    if (!search && !state) { return; }
+    var needle = (search ? search.value : "").trim().toLowerCase();
+    var want = state ? state.value : "";
+    var shown = 0;
+
+    document.querySelectorAll("tr[data-device]").forEach(function (row) {
+      var haystack = (row.dataset.device || "").toLowerCase();
+      var ok = (!needle || haystack.indexOf(needle) !== -1) &&
+               (!want || row.dataset.state === want);
+      row.hidden = !ok;
+      if (ok) { shown++; }
+    });
+
+    // Say when a filter has hidden everything. A table that simply ends
+    // looks like a system with no devices, which is a different and much
+    // more alarming thing than a search that matched nothing.
+    var empty = document.getElementById("filtered-empty");
+    if (empty) { empty.hidden = shown !== 0; }
+  }
+
+  document.addEventListener("input", function (e) {
+    if (e.target.id === "device-filter") { apply(); }
+  });
+  document.addEventListener("change", function (e) {
+    if (e.target.id === "state-filter") { apply(); }
+  });
+  // And again after every HTMX swap, because the new rows arrive
+  // unfiltered while the controls still show what was asked for.
+  document.body.addEventListener("htmx:afterSwap", apply);
 })();
 
 // --- the theme switch ----------------------------------------------------

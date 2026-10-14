@@ -69,14 +69,14 @@ def tiles(conn) -> list[Tile]:
     top = max(defensible, key=lambda r: float(r["used"] or 0), default=None)
 
     return [
-        Tile(label="Consumption, 7 days",
+        Tile(label="Consumption, 7 days", icon="trend", tone="teal",
              value=f"{total:,.0f}" if defensible else "—",
              small="kWh" if defensible else "",
              # Anything the system would not stand behind is the thing to
              # say out loud, not to average away.
              state="" if not rows else
                    ("good" if len(defensible) == len(rows) else "alarm")),
-        Tile(label="Highest consumer",
+        Tile(label="Highest consumer", icon="gauge", tone="blue",
              value=top["code"] if top else "—",
              small=f"{float(top['used'] or 0):,.0f} kWh" if top else ""),
     ]

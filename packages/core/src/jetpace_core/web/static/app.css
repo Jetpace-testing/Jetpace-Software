@@ -1,71 +1,160 @@
 /* Jetpace dashboard.
  *
- * Colours come from the validated data-viz palette. The three series hues
- * (blue / orange / aqua) passed the adjacent-pair gates in both light and
- * dark modes; the status four are reserved and never reused as a series.
+ * ONE RULE ABOVE THE REST: colour means data or state. Chrome is quiet.
  *
- * Aqua measures 2.74:1 on the light surface, below the 3:1 bar, so the
- * relief rule applies: every chart ships direct end-of-line labels and a
- * table view, and identity is never carried by colour alone.
+ * Buttons, the active navigation item and focus rings are drawn in a deep
+ * ocean blue that reads as structure rather than as a signal. Nothing
+ * decorative is ever coloured. The consequence is that any colour on the
+ * screen is information - which is what a monitoring product needs and a
+ * task application has no use for.
+ *
+ * This is why the brand colour is not green. Green already means "in
+ * spec" here: --good and --good-ink are what .pill.good and .tile.good are
+ * drawn with, and on /environment green means the cascade is holding.
+ * Chrome in the colour of a safety signal destroys the signal.
+ *
+ * The three series hues (blue / orange / aqua) passed the adjacent-pair
+ * gates in both modes; the status four are reserved and never reused as a
+ * series. Aqua measures 2.74:1 on the light surface, below the 3:1 bar, so
+ * the relief rule applies: every chart ships direct end-of-line labels and
+ * a table view, and identity is never carried by colour alone.
+ *
+ * Every value here was checked with the data-viz validator rather than
+ * chosen by eye. Re-check before changing one.
  */
+
+/* One variable file, 48 KB, covering every weight the design uses. Served
+ * from our own static directory - a plant network often has no route to a
+ * CDN, which is the same reason there is no build step. The unicode-range
+ * is the latin subset we actually shipped, so anything outside it falls
+ * back to the system stack instead of rendering as tofu.
+ *
+ * It is here for tabular figures as much as for its shape: a column of
+ * readings has to line up, and a value that changes must not make its row
+ * twitch. See static/vendor/README.md. */
+@font-face {
+  font-family: "Inter";
+  src: url("/static/vendor/inter-latin.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+                 U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F,
+                 U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF,
+                 U+FFFD;
+}
 
 :root {
   color-scheme: light;
 
-  --plane:        #f9f9f7;
-  --surface:      #fcfcfb;
+  /* Neutrals, cool rather than warm.
+   *
+   * The surface is pure white on a plane that is genuinely darker than
+   * it. These were #fcfcfb on #f9f9f7 - a contrast ratio of 1.03:1, three
+   * values apart - which is the arithmetic behind cards that did not read
+   * as cards. 1.12:1 is the least separation the eye reliably sees.
+   *
+   * --muted was #898781, which measured 3.50:1 on the old surface and so
+   * failed WCAG AA for the captions, axis labels, tile labels and pill
+   * text drawn with it. That was a defect, not a preference.
+   *
+   * It is sized against the PLANE, not the card: section headings and the
+   * clock sit on the page background, which is darker, so the card figure
+   * flatters it. 4.64:1 on the plane, 5.20:1 on a card - the first number
+   * is the one that binds. */
+  --plane:        #f1f2f4;
+  --surface:      #ffffff;
   --ink:          #0b0b0b;
-  --ink-2:        #52514e;
-  --muted:        #898781;
-  --grid:         #e1e0d9;
-  --axis:         #c3c2b7;
+  --ink-2:        #454a52;
+  --muted:        #686d76;
+  --grid:         #e3e6ea;
+  --axis:         #c3c8cf;
   --hairline:     rgba(11, 11, 11, .10);
 
+  /* Chrome. Deep on purpose: white text sits on it at 11.45:1, and it is
+   * far enough from --series-1 that a filled button never reads as a
+   * chart line. A bright accent would have competed with the data. */
+  --chrome:       #0d3b66;
+  --chrome-hover: #11497f;
+  --chrome-tint:  #e8eef5;
+  --on-chrome:    #ffffff;
+
+  /* Data. Never used for chrome. */
   --series-1:     #2a78d6;
   --series-2:     #eb6834;
   --series-3:     #1baf7a;
 
+  /* State. Reserved - never used for a series, and never for chrome. */
   --good:         #0ca30c;
   --warning:      #fab219;
   --serious:      #ec835a;
   --critical:     #d03b3b;
   --good-ink:     #006300;
 
-  --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Space and shape, as a scale rather than ad-hoc values, so density can
+   * be retuned in one place when the plant-PC question is answered. */
+  --space-1:      4px;
+  --space-2:      8px;
+  --space-3:      12px;
+  --space-4:      16px;
+  --space-5:      24px;
+  --space-6:      32px;
+  --radius:       12px;
+  --radius-sm:    8px;
+  --radius-pill:  999px;
+
+  --font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
+/* Dark mode is chosen, not flipped. Every neutral is its own value and
+ * the chrome blue is a different colour entirely: the light-mode #0d3b66
+ * measures 1.52:1 against a dark surface, which is near enough to
+ * invisible. #2b6cab carries white text at 5.47:1 and still stands off
+ * the surface at 3.18:1.
+ *
+ * The block below and the [data-theme="dark"] one are deliberately
+ * identical - one answers the system preference, the other an explicit
+ * choice. Change one and change the other. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --plane:    #0d0d0d;
-    --surface:  #1a1a19;
-    --ink:      #ffffff;
-    --ink-2:    #c3c2b7;
-    --muted:    #898781;
-    --grid:     #2c2c2a;
-    --axis:     #383835;
-    --hairline: rgba(255, 255, 255, .10);
-    --series-1: #3987e5;
-    --series-2: #d95926;
-    --series-3: #199e70;
-    --good-ink: #0ca30c;
+    --plane:        #0e1012;
+    --surface:      #191b1e;
+    --ink:          #ffffff;
+    --ink-2:        #c7ccd3;
+    --muted:        #8b919b;
+    --grid:         #292d33;
+    --axis:         #3a3f47;
+    --hairline:     rgba(255, 255, 255, .10);
+    --chrome:       #2b6cab;
+    --chrome-hover: #3379bb;
+    --chrome-tint:  #152e45;
+    --on-chrome:    #ffffff;
+    --series-1:     #3987e5;
+    --series-2:     #d95926;
+    --series-3:     #199e70;
+    --good-ink:     #0ca30c;
   }
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --plane:    #0d0d0d;
-  --surface:  #1a1a19;
-  --ink:      #ffffff;
-  --ink-2:    #c3c2b7;
-  --muted:    #898781;
-  --grid:     #2c2c2a;
-  --axis:     #383835;
-  --hairline: rgba(255, 255, 255, .10);
-  --series-1: #3987e5;
-  --series-2: #d95926;
-  --series-3: #199e70;
-  --good-ink: #0ca30c;
+  --plane:        #0e1012;
+  --surface:      #191b1e;
+  --ink:          #ffffff;
+  --ink-2:        #c7ccd3;
+  --muted:        #8b919b;
+  --grid:         #292d33;
+  --axis:         #3a3f47;
+  --hairline:     rgba(255, 255, 255, .10);
+  --chrome:       #2b6cab;
+  --chrome-hover: #3379bb;
+  --chrome-tint:  #152e45;
+  --on-chrome:    #ffffff;
+  --series-1:     #3987e5;
+  --series-2:     #d95926;
+  --series-3:     #199e70;
+  --good-ink:     #0ca30c;
 }
 
 * { box-sizing: border-box; }
@@ -94,10 +183,11 @@ header.top .clock { margin-left: auto; color: var(--muted); font-size: 12.5px;
 
 /* ---------- summary tiles ---------- */
 
-.tiles { display: grid; gap: 10px; margin: 18px 0 26px;
+.tiles { display: grid; gap: var(--space-3); margin: 18px 0 var(--space-5);
          grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); }
 .tile { background: var(--surface); border: 1px solid var(--hairline);
-        border-radius: 6px; padding: 12px 14px; }
+        border-radius: var(--radius-sm);
+        padding: var(--space-3) var(--space-4); }
 .tile dt { font-size: 11px; font-weight: 600; letter-spacing: .07em;
            text-transform: uppercase; color: var(--muted); margin: 0 0 4px; }
 .tile dd { margin: 0; font-size: 25px; font-weight: 600; letter-spacing: -.02em; }
@@ -132,7 +222,7 @@ section > h2 .hint { font-weight: 500; letter-spacing: 0; text-transform: none;
                      font-size: 12px; color: var(--muted); }
 
 .card { background: var(--surface); border: 1px solid var(--hairline);
-        border-radius: 6px; overflow: hidden; }
+        border-radius: var(--radius); overflow: hidden; }
 
 /* ---------- tables ---------- */
 
@@ -189,7 +279,7 @@ button.toggle {
   padding: 3px 9px; cursor: pointer;
 }
 button.toggle:hover { border-color: var(--axis); }
-button.toggle:focus-visible { outline: 2px solid var(--series-1); outline-offset: 1px; }
+button.toggle:focus-visible { outline: 2px solid var(--chrome); outline-offset: 1px; }
 
 /* the table view that satisfies the relief rule */
 .table-view[hidden] { display: none; }
@@ -234,10 +324,10 @@ nav.nav a {
 nav.nav a:hover { color: var(--ink); }
 nav.nav a.current {
   color: var(--ink);
-  border-bottom-color: var(--series-1);
+  border-bottom-color: var(--chrome);
 }
 nav.nav a:focus-visible {
-  outline: 2px solid var(--series-1);
+  outline: 2px solid var(--chrome);
   outline-offset: -2px;
 }
 
@@ -270,13 +360,13 @@ button.chip {
 button.chip:hover { color: var(--ink); border-color: var(--axis); }
 button.chip.current {
   color: var(--ink);
-  border-color: var(--series-1);
+  border-color: var(--chrome);
   /* A 1px tint rather than a filled button: the chart is the thing being
      looked at, and a loud control steals from it. */
-  box-shadow: inset 0 0 0 1px var(--series-1);
+  box-shadow: inset 0 0 0 1px var(--chrome);
 }
 button.chip:focus-visible {
-  outline: 2px solid var(--series-1);
+  outline: 2px solid var(--chrome);
   outline-offset: 1px;
 }
 
@@ -321,7 +411,7 @@ a.code {
   text-decoration: none;
   border-bottom: 1px solid var(--axis);
 }
-a.code:hover { border-bottom-color: var(--series-1); }
+a.code:hover { border-bottom-color: var(--chrome); }
 
 /* --- status pills -------------------------------------------------------
  * Every pill carries its word. Colour is the second encoding, never the

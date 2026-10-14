@@ -162,6 +162,49 @@ def create_app(dsn: str,
         for p in products
     ]
 
+    # --- cache busting -----------------------------------------------------
+    #
+    # Templates ask for an asset through `asset()`, which appends the file's
+    # modification time, so the URL changes whenever the file does.
+    #
+    # This is not a nicety. StaticFiles sends an etag and a last-modified
+    # and no Cache-Control, which leaves the browser to decide, and a
+    # browser that decides to keep a stylesheet will render NEW markup with
+    # OLD rules. That is not a hypothetical - it happened here the first
+    # time the shell changed, and the page came back looking unstyled:
+    # tabs across the top from a rule that had been deleted, an off-screen
+    # skip link sitting in the middle of the page, and nothing to say why.
+    #
+    # The place it really matters is after an over-the-air update. The
+    # supervisor swaps app/, restarts, and serves new HTML to an operator
+    # whose browser has yesterday's CSS. Nobody at the site would guess
+    # that is what they are looking at.
+    #
+    # A stat per asset per render, three of them. Cheap, and it means a
+    # changed file is a changed URL without anyone having to remember.
+    static_roots: dict[str, Path] = {"": HERE / "static"}
+    for product in products:
+        if product.static is not None:
+            static_roots[product.slug] = product.static
+
+    def asset(url_path: str) -> str:
+        rest = url_path.removeprefix("/static/")
+        head, _, tail = rest.partition("/")
+        if tail and head in static_roots:
+            root, relative = static_roots[head], tail
+        else:
+            root, relative = static_roots[""], rest
+        try:
+            stamp = int((root / relative).stat().st_mtime)
+        except OSError:
+            # Missing or unreadable: hand back the plain path and let the
+            # 404 say so, rather than inventing a version for a file that
+            # is not there.
+            return url_path
+        return f"{url_path}?v={stamp}"
+
+    templates.env.globals["asset"] = asset
+
     def rows_for_live(conn):
         """Group the flat live query into one entry per device."""
         by_device: dict[str, dict] = {}

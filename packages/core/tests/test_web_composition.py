@@ -13,6 +13,7 @@ touches no database. The two routes that would (`/` and `/devices`) are
 never requested here.
 """
 
+import os
 from pathlib import Path
 
 import pytest
@@ -270,3 +271,66 @@ def test_asking_for_a_product_that_does_not_exist_names_what_to_do():
     assert "jetpace_nosuchproduct" in message
     assert "hidden-import" in message, (
         "the frozen case is the one somebody will actually hit")
+
+
+# --- cache busting --------------------------------------------------------
+#
+# A browser that keeps a stylesheet renders new markup with old rules. It
+# happened here the first time the shell changed, and the page came back
+# looking unstyled with nothing to say why. After an over-the-air update
+# the same thing would happen to an operator at a site.
+
+def test_core_assets_carry_a_version(tmp_path):
+    body = TestClient(create_app(DSN, [fake_product(tmp_path)])).get("/demo").text
+    assert "/static/app.css?v=" in body
+    assert "/static/vendor/echarts.min.js?v=" in body
+
+
+def test_a_products_stylesheet_is_versioned_from_its_own_file(tmp_path):
+    """
+    The product's static directory is not core's, so a naive lookup would
+    stat the wrong file - or no file - and hand back an unversioned path.
+    """
+    product = fake_product(tmp_path)
+    body = TestClient(create_app(DSN, [product])).get("/demo").text
+    stamp = int((product.static / "demo.css").stat().st_mtime)
+    assert f"/static/demo/demo.css?v={stamp}" in body
+
+
+def test_the_version_changes_when_the_file_does(tmp_path):
+    """The whole point: a changed file has to be a changed URL."""
+    product = fake_product(tmp_path)
+    app = create_app(DSN, [product])
+    before = TestClient(app).get("/demo").text
+
+    sheet = product.static / "demo.css"
+    sheet.write_text("#demo{color:blue}", encoding="utf-8")
+    os.utime(sheet, (0, 1_700_000_000))
+
+    after = TestClient(app).get("/demo").text
+    assert "?v=1700000000" in after
+    assert before != after, "the stamp is read per render, not frozen at startup"
+
+
+def test_a_missing_asset_is_left_alone(tmp_path):
+    """
+    No invented version for a file that is not there - let the 404 say so
+    rather than making a broken path look deliberate.
+
+    Asked through a template, because that is the only way in: `asset` is
+    a closure over create_app's product list, which is what lets it know
+    where a product's static directory is.
+    """
+    product = fake_product(tmp_path)
+    (product.templates / "demo.html").write_text(
+        '{% extends "_base.html" %}{% block nav %}demo{% endblock %}'
+        "{% block content %}"
+        "<p id=present>{{ asset('/static/app.css') }}</p>"
+        "<p id=absent>{{ asset('/static/no-such-file.css') }}</p>"
+        "<p id=absent2>{{ asset('/static/demo/no-such-file.css') }}</p>"
+        "{% endblock %}", encoding="utf-8")
+
+    body = TestClient(create_app(DSN, [product])).get("/demo").text
+    assert "/static/app.css?v=" in body
+    assert "<p id=absent>/static/no-such-file.css</p>" in body
+    assert "<p id=absent2>/static/demo/no-such-file.css</p>" in body

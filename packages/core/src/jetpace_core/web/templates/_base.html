@@ -16,18 +16,26 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}Jetpace{% endblock %}</title>
-<link rel="stylesheet" href="/static/app.css">
+{# Every asset goes through asset(), which stamps the URL with the file's
+   modification time. A browser that keeps a stylesheet would otherwise
+   render new markup with old rules - which is what an operator sees after
+   an update if nothing changes the URL. See create_app.
+
+   `asset` is guarded because a template rendered outside create_app - a
+   compile check, a unit test - has no such global. #}
+{% macro v(path) %}{{ asset(path) if asset is defined else path }}{% endmacro %}
+<link rel="stylesheet" href="{{ v('/static/app.css') }}">
 {# Each loaded product's own stylesheet, and only those. A cleanroom
    install does not fetch the energy CSS and has no rules for elements it
    will never render. `products or []` because a template rendered outside
    create_app - a compile check, a unit test - has no products global. #}
 {% for p in products or [] %}{% if p.stylesheet %}
-<link rel="stylesheet" href="{{ p.stylesheet }}">
+<link rel="stylesheet" href="{{ v(p.stylesheet) }}">
 {% endif %}{% endfor %}
 {# Vendored, not from a CDN: a plant network often has no route out, and
    that is also why there is no build step. #}
-<script src="/static/vendor/htmx.min.js" defer></script>
-<script src="/static/vendor/echarts.min.js" defer></script>
+<script src="{{ v('/static/vendor/htmx.min.js') }}" defer></script>
+<script src="{{ v('/static/vendor/echarts.min.js') }}" defer></script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>

@@ -16,6 +16,31 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}Jetpace{% endblock %}</title>
+{# BEFORE the stylesheet, and deliberately blocking.
+
+   The theme has to be on the html element before the first paint. Run
+   this at the end of the body instead and a person who has chosen dark
+   gets a white page first and the right one a moment later - the flash
+   every site with a theme switch gets wrong once. Blocking is the point;
+   it is four lines and no network.
+
+   No stored preference means no attribute, which leaves the
+   prefers-color-scheme rules to decide. That is the default and it is
+   the OS's answer, not ours. #}
+<script>
+(function () {
+  try {
+    var saved = localStorage.getItem("jetpace-theme");
+    if (saved === "light" || saved === "dark") {
+      document.documentElement.setAttribute("data-theme", saved);
+    }
+  } catch (e) {
+    /* A private window, blocked site data, or a policy that forbids
+       storage. Falling through means the operating system decides,
+       which is a good answer rather than an error. */
+  }
+})();
+</script>
 {# Every asset goes through asset(), which stamps the URL with the file's
    modification time. A browser that keeps a stylesheet would otherwise
    render new markup with old rules - which is what an operator sees after
@@ -96,7 +121,35 @@
         {% set lede = self.page_lede() | trim %}
         {% if lede %}<p class="lede">{{ lede }}</p>{% endif %}
       </div>
-      <span class="clock" id="clock"></span>
+      <div class="topright">
+        <span class="clock" id="clock"></span>
+        {# Three icons in the markup, one shown by CSS according to
+           data-theme. No JavaScript decides which - it cannot be wrong
+           about the state because it is not consulted. #}
+        <button class="themer" type="button" id="theme">
+          <svg class="i-auto" viewBox="0 0 16 16" width="14" height="14"
+               aria-hidden="true" focusable="false">
+            <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor"
+                    stroke-width="1.4"/>
+            <path fill="currentColor" d="M8 2a6 6 0 0 1 0 12z"/>
+          </svg>
+          <svg class="i-light" viewBox="0 0 16 16" width="14" height="14"
+               aria-hidden="true" focusable="false">
+            <circle cx="8" cy="8" r="3.2" fill="currentColor"/>
+            <g stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+              <path d="M8 1v1.7M8 13.3V15M1 8h1.7M13.3 8H15M3.05 3.05l1.2 1.2
+                       M11.75 11.75l1.2 1.2M12.95 3.05l-1.2 1.2
+                       M4.25 11.75l-1.2 1.2"/>
+            </g>
+          </svg>
+          <svg class="i-dark" viewBox="0 0 16 16" width="14" height="14"
+               aria-hidden="true" focusable="false">
+            <path fill="currentColor"
+                  d="M13.2 10.3A5.6 5.6 0 0 1 5.7 2.8a5.8 5.8 0 1 0 7.5 7.5z"/>
+          </svg>
+          <span class="themer-label">Auto</span>
+        </button>
+      </div>
     </header>
 
     {% block content %}{% endblock %}
@@ -120,6 +173,71 @@
   }
   tick();
   setInterval(tick, 1000);
+})();
+
+// --- the theme switch ----------------------------------------------------
+//
+// THREE states, not two. "Auto" follows the operating system and is the
+// default; light and dark are explicit. A two-way toggle would be simpler
+// and would trap anyone who touched it, because once data-theme is set
+// there would be no way back to letting the OS decide - and on a plant PC
+// that changes theme on a schedule, that matters.
+//
+// The head script has already applied the stored choice before paint.
+// This only has to label the button and move it on.
+(function () {
+  var KEY = "jetpace-theme";
+  var ORDER = ["auto", "light", "dark"];
+  var WORD = { auto: "Auto", light: "Light", dark: "Dark" };
+
+  var btn = document.getElementById("theme");
+  if (!btn) { return; }
+  var label = btn.querySelector(".themer-label");
+
+  function current() {
+    return document.documentElement.getAttribute("data-theme") || "auto";
+  }
+
+  function describe(mode) {
+    if (label) { label.textContent = WORD[mode]; }
+    var next = ORDER[(ORDER.indexOf(mode) + 1) % ORDER.length];
+    // The accessible name says the state AND what pressing it does,
+    // because the icon alone cannot say either to a screen reader.
+    btn.setAttribute("aria-label",
+      "Theme: " + WORD[mode] + ". Switch to " + WORD[next] + ".");
+    btn.title = btn.getAttribute("aria-label");
+  }
+
+  function apply(mode) {
+    if (mode === "auto") {
+      document.documentElement.removeAttribute("data-theme");
+      try { localStorage.removeItem(KEY); } catch (e) { /* see the head */ }
+    } else {
+      document.documentElement.setAttribute("data-theme", mode);
+      try { localStorage.setItem(KEY, mode); } catch (e) { /* see the head */ }
+    }
+    describe(mode);
+
+    // ECharts reads its colours out of the stylesheet AT DRAW TIME, so a
+    // chart drawn before the switch keeps the old palette: axes and grid
+    // from the other theme, a tooltip the wrong colour, series hues that
+    // no longer match the legend beside them. Nothing here can repaint
+    // them, because the options live in each page's own code and are not
+    // reachable from the shell.
+    //
+    // So a page that has actually drawn something reloads, and a page
+    // that has not switches instantly. Testing for a canvas rather than
+    // for window.__charts on purpose - only device.html registers its
+    // chart there, while the environment and energy pages build theirs
+    // directly, so the registry would say "no charts" on exactly the two
+    // pages that have the most.
+    if (document.querySelector("canvas")) { location.reload(); }
+  }
+
+  describe(current());
+  btn.addEventListener("click", function () {
+    apply(ORDER[(ORDER.indexOf(current()) + 1) % ORDER.length]);
+  });
 })();
 
 function cssVar(name) {

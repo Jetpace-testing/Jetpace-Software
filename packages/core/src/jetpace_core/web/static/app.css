@@ -278,8 +278,41 @@ header.top h1 {
   font-size: 28px; font-weight: 700; margin: 0; letter-spacing: -.025em;
 }
 header.top .lede { margin: var(--space-2) 0 0; }
-header.top .clock { margin-left: auto; color: var(--muted); font-size: 12.5px;
+header.top .topright {
+  margin-left: auto; display: flex; align-items: center;
+  gap: var(--space-3); flex: none;
+}
+header.top .clock { color: var(--muted); font-size: 12.5px;
                     font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* --- the theme switch ---------------------------------------------------
+ * Which icon shows is decided by CSS from data-theme, not by JavaScript.
+ * A script that sets the icon can disagree with the stylesheet about the
+ * current state; a stylesheet reading the same attribute it is styling
+ * from cannot.
+ * --------------------------------------------------------------------- */
+
+.themer {
+  display: inline-flex; align-items: center; gap: 6px;
+  font: inherit; font-size: 12px; font-weight: 500;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
+  padding: 4px var(--space-3) 4px var(--space-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.themer:hover { border-color: var(--axis); color: var(--ink); }
+.themer:focus-visible { outline: 2px solid var(--chrome); outline-offset: 2px; }
+.themer svg { flex: none; display: none; }
+
+/* No attribute means auto, which is the default state. */
+.themer .i-auto { display: block; }
+:root[data-theme="light"] .themer .i-auto  { display: none; }
+:root[data-theme="light"] .themer .i-light { display: block; }
+:root[data-theme="dark"]  .themer .i-auto  { display: none; }
+:root[data-theme="dark"]  .themer .i-dark  { display: block; }
 
 /* Below this the side column stops being a column. A narrow window is a
    laptop with a browser beside something else, not a phone, so the nav

@@ -334,3 +334,48 @@ def test_a_missing_asset_is_left_alone(tmp_path):
     assert "/static/app.css?v=" in body
     assert "<p id=absent>/static/no-such-file.css</p>" in body
     assert "<p id=absent2>/static/demo/no-such-file.css</p>" in body
+
+
+# --- the theme switch -----------------------------------------------------
+
+def test_the_theme_switch_is_in_the_shell(tmp_path):
+    body = TestClient(create_app(DSN, [fake_product(tmp_path)])).get("/demo").text
+    assert 'id="theme"' in body
+    # All three icons ship; CSS picks one from data-theme, so no script can
+    # disagree with the stylesheet about which state is current.
+    for icon in ("i-auto", "i-light", "i-dark"):
+        assert icon in body
+
+
+def test_the_stored_theme_is_applied_before_the_stylesheet_loads(tmp_path):
+    """
+    THE ORDERING IS THE WHOLE POINT. The script that reads the saved
+    choice has to run before the stylesheet, or a person who chose dark
+    gets a white page first and the right one a moment later.
+
+    Asserted by position in the document rather than by presence, because
+    moving the script to the end of the body would leave every other
+    assertion about it passing.
+    """
+    body = TestClient(create_app(DSN, [fake_product(tmp_path)])).get("/demo").text
+    head = body.split("</head>")[0]
+    assert "jetpace-theme" in head, "the theme script must be in the head"
+    assert head.index("jetpace-theme") < head.index("/static/app.css"), (
+        "the theme script must come before the stylesheet, or the page "
+        "flashes the wrong theme")
+
+
+def test_the_theme_script_survives_blocked_storage(tmp_path):
+    """
+    localStorage throws in a private window and under some site-data
+    policies. An unguarded read there would abort the inline script and
+    take the rest of the head with it.
+    """
+    import re
+
+    head = TestClient(create_app(DSN, [fake_product(tmp_path)])) \
+        .get("/demo").text.split("</head>")[0]
+    scripts = re.findall(r"<script\b[^>]*>(.*?)</script>", head, re.S)
+    theme = [s for s in scripts if "jetpace-theme" in s]
+    assert theme, "no inline script in the head reads the stored theme"
+    assert "try" in theme[0] and "catch" in theme[0]

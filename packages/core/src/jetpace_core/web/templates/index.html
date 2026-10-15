@@ -33,7 +33,8 @@
 
   <div class="dashboard-grid">
     <section class="panel device-panel" id="live"
-             hx-get="/partials/live" hx-trigger="every 5s" hx-swap="innerHTML">
+             hx-get="/partials/live" hx-trigger="every 5s, refresh"
+             hx-swap="innerHTML">
       {% include "_live.html" %}
     </section>
 
@@ -429,9 +430,23 @@ ready(function () {
   function show(id) {
     var el = document.getElementById("modal-" + id);
     if (!el) { return; }
+    // Clear the last visit's results. Reopening the form with a previous
+    // device's probe reading still sitting under it is how somebody
+    // commissions the wrong instrument: the panel says 12 Pa and it is
+    // about the device they looked at five minutes ago.
+    ["probe-result", "commission-result"].forEach(function (slot) {
+      var box = el.querySelector("#" + slot);
+      if (box) { box.innerHTML = ""; }
+    });
+    // And bring the form back, if a successful commission put it away.
+    var form = el.querySelector("#add-device-form");
+    if (form) { form.hidden = false; form.reset(); }
     el.hidden = false;
     open = el;
-    var first = el.querySelector("[data-modal-close]");
+    // The first real field, not the close button: this form is filled in
+    // from a datasheet and the operator's hands are already on the
+    // keyboard.
+    var first = el.querySelector("input, select, [data-modal-close]");
     if (first) { first.focus(); }
   }
   function hide() {
@@ -447,6 +462,41 @@ ready(function () {
   });
   document.addEventListener("keydown", function (ev) {
     if (ev.key === "Escape" && open) { hide(); }
+  });
+
+  // A rejection names the field it is about. Mark it, so the sentence at
+  // the bottom of a six-field form has something to point at - and clear
+  // the previous mark first, or a corrected field stays red forever.
+  document.addEventListener("htmx:afterSwap", function (ev) {
+    var form = document.getElementById("add-device-form");
+    if (!form || !ev.detail.target.id) { return; }
+    if (ev.detail.target.id !== "commission-result" &&
+        ev.detail.target.id !== "probe-result") { return; }
+    form.querySelectorAll(".field-wrong").forEach(function (el) {
+      el.classList.remove("field-wrong");
+    });
+    var bad = ev.detail.target.querySelector("[data-field]");
+    var which = bad && bad.dataset.field;
+    if (!which) { return; }
+    var input = form.querySelector("[name='" + which + "']");
+    if (input && input.closest(".field")) {
+      input.closest(".field").classList.add("field-wrong");
+      input.focus();
+    }
+  });
+
+  // A device the poller has not picked up yet is in the table but has no
+  // readings, so the live poll is what makes it appear. Nudge it rather
+  // than waiting up to five seconds for the next tick.
+  document.addEventListener("htmx:afterSwap", function (ev) {
+    if (ev.detail.target.id !== "commission-result") { return; }
+    if (!ev.detail.target.querySelector(".commission-good")) { return; }
+    // Put the form away. Leaving it under the confirmation offers a
+    // Commission button that would now be rejected for a duplicate code,
+    // and leaves the previous device's details sitting in the fields.
+    var form = document.getElementById("add-device-form");
+    if (form) { form.hidden = true; }
+    if (window.htmx) { window.htmx.trigger("#live", "refresh"); }
   });
 })();
 </script>

@@ -67,5 +67,10 @@ DEVICE_TYPES = (
                   aggregation="instantaneous", decimals=0),
         ),
         limits="dp",
+        code_prefix="DP",
+        # Not a trend. A pressure cascade in a sterile corridor is the
+        # thing the room is qualified on, which is what 'critical' means
+        # and why it is this product's call rather than the platform's.
+        scan_class="critical",
     ),
 )

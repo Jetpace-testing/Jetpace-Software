@@ -16,17 +16,19 @@ out of the poller keeps it out of the web layer.
 from __future__ import annotations
 
 import os
+import threading
 import time
 from collections.abc import Sequence
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from ..poller import PointSpec
 from . import products as products_
-from . import queries
+from . import queries, writes
 
 HERE = Path(__file__).resolve().parent
 
@@ -141,6 +143,24 @@ SPARK_W, SPARK_H = 100.0, 24.0
 # Pinned to _kpis.html by a test, because this number exists only to work
 # out how to lay the row out and would otherwise drift the first time
 # somebody adds a fifth.
+# How long to wait for an instrument on the commissioning form.
+#
+# Shorter than the poller's own 2 s, deliberately: a browser is waiting,
+# and the two failures this is distinguishing - the converter is not
+# there, the slave is not answering - are both decided by a timeout. A
+# device type with two points means a wrong slave address costs this once
+# rather than twice, because the probe stops after the first point does
+# not come back.
+PROBE_TIMEOUT = 1.5
+
+# What the form promises about how soon a commissioned device starts being
+# read. It is `jetpace poller --reload`'s default, and the form says the
+# number so that a device sitting offline for a few seconds reads as the
+# truth about it rather than as a fault. A site that tunes --reload has to
+# change this to match; nothing can discover it, because the poller is a
+# different process and may not even be running.
+DEVICE_RELOAD_SECONDS = 10
+
 SHELL_TILES = 4
 
 # The most figures that stay readable in one row, at three widths. Nine
@@ -578,8 +598,25 @@ def create_app(dsn: str,
             zones, counts = facility(conn)
             tiles = product_tiles(conn)
             first = initial_device(rows)
+            catalogue = device_types()
+            default = (next(iter(catalogue.values()))[1]
+                       if catalogue else None)
             return templates.TemplateResponse(request, "index.html", {
                 "summary": queries.summary(conn),
+                # The commissioning form's furniture. Computed on the
+                # overview rather than fetched when the modal opens,
+                # because a suggested code has to be read off the device
+                # table and the modal is already in the page.
+                "device_types": {code: entry[1]
+                                 for code, entry in catalogue.items()},
+                "device_type": default,
+                "default_port": default.default_port if default else 502,
+                "suggested_code": (
+                    writes.suggest_code(conn, queries.tenant_id(conn),
+                                        default.code_prefix)
+                    if default else ""),
+                "limit_unit": (default.limit_point().unit
+                               if default and default.limits else ""),
                 "devices": rows,
                 "product_tiles": tiles,
                 "kpi_columns": kpi_grid(SHELL_TILES + len(tiles)),
@@ -595,6 +632,253 @@ def create_app(dsn: str,
                 "exports": [{"label": a, "note": b, "href": c}
                             for a, b, c in EXPORTS],
             })
+
+    # --- commissioning a device ----------------------------------------
+    #
+    # The first write path this application has had. Three routes: one
+    # that describes the selected device type, one that reads the
+    # instrument, and one that creates the rows.
+    #
+    # ONE PROBE AT A TIME per process. A probe holds a TCP connection to
+    # a converter for up to a couple of seconds and lands a request on a
+    # shared serial bus that the poller is also walking. Converters
+    # serialise onto the serial side, so an overlapping probe comes back
+    # empty rather than corrupting anything - but an operator clicking
+    # the button five times should queue, not pile five sessions onto one
+    # bus. A single lock rather than one per bus because probes are rare
+    # and short, and a dict of locks would be a second thing to get
+    # wrong.
+    probe_lock = threading.Lock()
+
+    def device_types() -> dict:
+        """
+        Every instrument the loaded products sell, keyed by model code.
+
+        Computed per request rather than once, because it is a dict
+        comprehension over a tuple the products already hold - and
+        because caching it would make a reload of this process the only
+        way to notice a product being enabled.
+        """
+        return products_.device_types(products)
+
+    def point_specs(device_type) -> list:
+        """
+        The device type's points as the poller's own PointSpec.
+
+        Built here so the probe reads EXACTLY what the poller will read,
+        from the same register map, with the same addresses and the same
+        decoding. A probe that read something else would be confirming a
+        device the poller then cannot talk to.
+        """
+        return [
+            PointSpec(param=p.param,
+                      address=device_type.register_for(p).address,
+                      kind=device_type.register_for(p).kind,
+                      scale=p.scale)
+            for p in device_type.points
+        ]
+
+    def probe_detail(found, device_type) -> str:
+        """
+        One line recording what the instrument said, for the audit row.
+
+        On success this is the reading the device was accepted on, which
+        is the one measurement nobody can reconstruct later. On failure
+        it is the probe's own explanation, which is what somebody reading
+        the audit log in a year needs in order to judge the override.
+        """
+        if not found.answered:
+            return found.detail
+        units = {p.param: p.unit for p in device_type.points}
+        decimals = {p.param: p.decimals for p in device_type.points}
+        return ", ".join(
+            f"{v.param}={v.value:.{decimals.get(v.param, 2)}f}"
+            f"{' ' + units[v.param] if units.get(v.param) else ''}"
+            for v in found.values) or found.detail
+
+    def limit_text(limit: dict | None, unit: str) -> str:
+        """"LSP -20 Pa, HSP -5 Pa", or one side, or nothing."""
+        if not limit:
+            return ""
+        parts = []
+        if limit["low"] is not None:
+            parts.append(f"LSP {float(limit['low']):g}")
+        if limit["high"] is not None:
+            parts.append(f"HSP {float(limit['high']):g}")
+        text = ", ".join(parts)
+        return f"{text} {unit}".strip() if text else ""
+
+    def selected_type(model: str | None):
+        """
+        The DeviceType the form is talking about, or the first one.
+
+        A model code that no loaded product sells is a rejection and not
+        a fallback: silently commissioning a device as something else is
+        the worst outcome this form has available, because the register
+        map decides which addresses are read and nothing downstream would
+        ever question it.
+        """
+        catalogue = device_types()
+        if not catalogue:
+            raise writes.WriteRejected(
+                "No product in this install carries a register map, so "
+                "there is no device type to commission.", "model")
+        if not model:
+            return next(iter(catalogue.values()))[1]
+        entry = catalogue.get(model)
+        if entry is None:
+            raise writes.WriteRejected(
+                f"{model!r} is not a device type this install carries. It "
+                f"has {', '.join(sorted(catalogue))}.", "model")
+        return entry[1]
+
+    @app.get("/partials/device-type", response_class=HTMLResponse)
+    def partial_device_type(request: Request, model: str | None = None):
+        """
+        What the chosen type reads, in words, with its datasheet numbers.
+
+        The form has no field for a register address. This is what makes
+        that visible rather than merely true.
+        """
+        try:
+            device_type = selected_type(model)
+        except writes.WriteRejected as exc:
+            return HTMLResponse(f"<em>{exc.message}</em>")
+        return templates.TemplateResponse(request, "_type_note.html",
+                                          {"device_type": device_type})
+
+    @app.post("/partials/probe", response_class=HTMLResponse)
+    def partial_probe(request: Request,
+                      host: str = Form(""),
+                      port: str = Form("502"),
+                      unit_id: str = Form("1"),
+                      model: str | None = Form(None)):
+        """
+        Read the instrument once and say what came back.
+
+        READ ONLY, and that is a build-time property rather than a
+        promise: `modbus_client.probe` calls `read` and there is no write
+        function in the module to call. Modbus writes are disabled at
+        build time (CLAUDE.md), and the register that sets a slave
+        address is in NEVER_WRITE because writing it costs a site visit.
+        """
+        from ..modbus_client import probe as modbus_probe
+
+        try:
+            device_type = selected_type(model)
+            port_n = writes._as_int(port, "port")
+            unit_n = writes._as_int(unit_id, "slave id")
+            if not host.strip():
+                raise writes.WriteRejected(
+                    "Give the converter's address first.", "host")
+            if not 1 <= unit_n <= writes.MAX_UNIT_ID:
+                raise writes.WriteRejected(
+                    f"A Modbus slave address is 1 to "
+                    f"{writes.MAX_UNIT_ID}.", "unit_id")
+        except writes.WriteRejected as exc:
+            return templates.TemplateResponse(
+                request, "_commissioned.html", {"rejected": exc})
+
+        with probe_lock:
+            result = modbus_probe(host.strip(), port_n, unit_n,
+                                  point_specs(device_type),
+                                  timeout_s=PROBE_TIMEOUT)
+
+        decimals = {p.param: p.decimals for p in device_type.points}
+        return templates.TemplateResponse(request, "_probe.html", {
+            "probe": {
+                "answered": result.answered,
+                "reachable": result.reachable,
+                "detail": result.detail,
+                # NOT "values". Jinja resolves `probe.values` to the
+                # dict's own .values METHOD before it looks for a key of
+                # that name, so the template silently iterated a bound
+                # method and raised. Any dict handed to a template has
+                # `keys`, `values`, `items`, `get` and `update` already
+                # taken.
+                #
+                # Each reading is rounded to the decimals the PRODUCT
+                # declared for that parameter. dp is 0 - a cleanroom
+                # cascade is read in whole pascals - and "12.00 Pa" on a
+                # commissioning screen implies a precision the
+                # instrument does not have.
+                "readings": [
+                    {"param": v.param,
+                     "shown": f"{v.value:.{decimals.get(v.param, 2)}f}"}
+                    for v in result.values
+                ],
+            },
+            "host": host.strip(), "port": port_n, "unit_id": unit_n,
+            "labels": {p.param: p.label for p in device_type.points},
+            "units": {p.param: p.unit for p in device_type.points},
+        })
+
+    @app.post("/partials/commission", response_class=HTMLResponse)
+    def partial_commission(request: Request,
+                           host: str = Form(""),
+                           port: str = Form("502"),
+                           unit_id: str = Form("1"),
+                           model: str | None = Form(None),
+                           code: str = Form(""),
+                           name: str = Form(""),
+                           gateway_label: str = Form(""),
+                           low: str = Form(""),
+                           high: str = Form(""),
+                           reason: str = Form("")):
+        """
+        Create the device, its parameters, its limits and the audit row.
+
+        One transaction, owned by the `with` below: `writes` never
+        commits, so either all of it lands or none of it does. A device
+        row without its device_parameter rows would be polled and store
+        nothing, and a device without its audit row is a configuration
+        change at a validated site that nobody can account for.
+
+        THE DEVICE IS PROBED AGAIN HERE, and not trusted from the earlier
+        click. What the form posts about whether it answered is a hidden
+        field in a browser, and the probe result goes into the audit
+        record as the value the instrument was accepted on - so it has to
+        be something this process observed, at the moment it wrote the
+        row, rather than something it was told.
+        """
+        from ..modbus_client import probe as modbus_probe
+
+        try:
+            device_type = selected_type(model)
+            port_n = writes._as_int(port, "port")
+            unit_n = writes._as_int(unit_id, "slave id")
+
+            with probe_lock:
+                found = modbus_probe(host.strip(), port_n, unit_n,
+                                     point_specs(device_type),
+                                     timeout_s=PROBE_TIMEOUT)
+
+            with queries.connect(dsn) as conn:
+                device = writes.commission_device(
+                    conn, device_type=device_type,
+                    code=code, name=name, host=host, port=port_n,
+                    unit_id=unit_n, low=low, high=high,
+                    gateway_label=gateway_label,
+                    answered=found.answered,
+                    detail=probe_detail(found, device_type),
+                    reason=reason)
+                limits = queries.device_limits(conn, device["code"])
+                next_code = writes.suggest_code(
+                    conn, queries.tenant_id(conn), device_type.code_prefix)
+        except writes.WriteRejected as exc:
+            return templates.TemplateResponse(
+                request, "_commissioned.html", {"rejected": exc})
+
+        unit = (device_type.limit_point().unit if device_type.limits else "")
+        return templates.TemplateResponse(request, "_commissioned.html", {
+            "device": device,
+            "unit_id": device["unit_id"],
+            "parameters": ", ".join(p.label for p in device_type.points),
+            "limit_text": limit_text(limits.get(device_type.limits or ""),
+                                     unit),
+            "reload_seconds": DEVICE_RELOAD_SECONDS,
+            "next_code": next_code,
+        })
 
     # The product views used to be four routes here - /environment,
     # /energy and their two APIs - with the parameter keys 'dp' and

@@ -1,0 +1,58 @@
+{# What came of pressing Commission.
+
+   On a rejection: the sentence, next to nothing else. `field` names which
+   input was wrong so the form can mark it, and the message is written to
+   be read by whoever is standing at the machine rather than by whoever
+   wrote the constraint.
+
+   On success: what was created, and - the part that matters - what
+   happens next. A device appears in the table immediately and stays
+   offline until the poller's next reload picks it up, which is up to ten
+   seconds. Without saying so, the honest behaviour looks like a bug. #}
+
+{% if rejected %}
+  <div class="commission commission-bad" data-field="{{ rejected.field }}">
+    <strong>Not commissioned.</strong>
+    <p>{{ rejected.message }}</p>
+  </div>
+{% else %}
+  <div class="commission commission-good">
+    <strong>{{ device.code }} &mdash; {{ device.name }} is commissioned.</strong>
+    <dl>
+      <div>
+        <dt>Bus</dt>
+        <dd>{{ device.gateway_label }}, slave {{ unit_id }}{%
+            if device.gateway_created %} &middot; new converter{% endif %}</dd>
+      </div>
+      <div>
+        <dt>Reads</dt>
+        <dd>{{ parameters }}</dd>
+      </div>
+      <div>
+        <dt>Set points</dt>
+        <dd>{% if limit_text %}{{ limit_text }}{% else %}none{% endif %}</dd>
+      </div>
+    </dl>
+    <p>
+      The poller picks it up within {{ reload_seconds }} seconds. Until
+      then it is in the device table, offline, with no readings &mdash;
+      which is the truth about it rather than a fault.
+    </p>
+    <div class="commission-actions">
+      <a class="primary-button" href="/devices/{{ device.code }}">Open it</a>
+      <button type="button" data-modal-close>Done</button>
+    </div>
+  </div>
+
+  {# Reopening the form suggests the NEXT free code rather than the one
+     just used. Commissioning a cleanroom is thirty of these in a row, and
+     a suggestion that is stale every time after the first is a rejection
+     the operator has to read and correct thirty times.
+
+     Out of band because the input is in the form above, not in this
+     swap's target. It carries its own id, type and pattern because an
+     OOB swap replaces the whole element. #}
+  <input id="field-code" name="code" type="text" required maxlength="31"
+         value="{{ next_code }}" autocomplete="off"
+         pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,30}" hx-swap-oob="true">
+{% endif %}

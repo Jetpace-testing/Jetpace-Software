@@ -1,0 +1,62 @@
+{# The result of one short conversation with an instrument.
+
+   THREE OUTCOMES AND NOT TWO, which is the whole reason the probe
+   reports `reachable` separately from `answered`. For somebody standing
+   in a plant these are different jobs:
+
+     answered       the device is there and this is what it says. The
+                    numbers are the point - "12 Pa" is how you know you
+                    are looking at the right instrument and not the one
+                    in the next room.
+     reachable      the converter replied and the slave did not. The
+                    network is fine; the bus is not. Slave address, A/B
+                    wiring, termination, baud rate, power.
+     neither        nothing answered at that address at all. Nothing to
+                    do with the instrument.
+
+   Collapsing them into "failed" would send an engineer to check cabling
+   when the address is wrong, and the other way round. #}
+
+{% if probe.answered %}
+  <div class="probe probe-good">
+    <div class="probe-head">
+      <strong>{{ host }}:{{ port }} unit {{ unit_id }} answered.</strong>
+      {% if probe.detail %}<span>{{ probe.detail }}</span>{% endif %}
+    </div>
+    <dl class="probe-values">
+      {% for value in probe.readings %}
+        <div>
+          <dt>{{ labels.get(value.param, value.param) }}</dt>
+          <dd>{{ value.shown }}{% if units.get(value.param) %}
+              <small>{{ units[value.param] }}</small>{% endif %}</dd>
+        </div>
+      {% endfor %}
+    </dl>
+    <small>
+      This reading goes into the audit record as the value the device was
+      accepted on.
+    </small>
+  </div>
+{% else %}
+  <div class="probe probe-bad">
+    <div class="probe-head">
+      <strong>
+        {% if probe.reachable %}
+          The converter answered. The device did not.
+        {% else %}
+          Nothing answered at {{ host }}:{{ port }}.
+        {% endif %}
+      </strong>
+    </div>
+    <p>{{ probe.detail }}</p>
+    {# Commissioning a device that is not answering is legitimate -
+       installed and not yet powered, cabled next week - but it needs a
+       reason, and the reason is kept. #}
+    <label class="field">
+      <span>Commission it anyway? Say why</span>
+      <input name="reason" type="text" autocomplete="off"
+             placeholder="Installed; power scheduled for Friday">
+      <small>Recorded in the audit log with the failed check.</small>
+    </label>
+  </div>
+{% endif %}

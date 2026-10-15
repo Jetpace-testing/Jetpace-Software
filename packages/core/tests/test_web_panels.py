@@ -64,6 +64,12 @@ def stub(monkeypatch, **overrides):
         "device_shape": {},
         "export_devices": [],
         "export_readings": (),
+        # The commissioning form's furniture, which the overview computes
+        # so the modal is complete in the page rather than fetched when
+        # it opens.
+        "tenant_id": 1,
+        "suggest_code": "DP-004",
+        "device_limits": {},
     }
     answers.update(overrides)
 
@@ -84,6 +90,14 @@ def stub(monkeypatch, **overrides):
                         lambda conn, code: answers["device_shape"])
     monkeypatch.setattr(q, "export_devices",
                         lambda conn: answers["export_devices"])
+    monkeypatch.setattr(q, "tenant_id", lambda conn: answers["tenant_id"])
+    monkeypatch.setattr(q, "device_limits",
+                        lambda conn, code: answers["device_limits"])
+
+    from jetpace_core.web import writes as w
+    monkeypatch.setattr(w, "suggest_code",
+                        lambda conn, tenant_id, prefix:
+                        answers["suggest_code"])
 
     class _Rows:
         def __enter__(self): return iter(answers["export_readings"])
@@ -474,19 +488,93 @@ def test_the_device_export_is_a_real_inventory(monkeypatch):
 
 # --- the modal -----------------------------------------------------------
 
-def test_the_add_device_modal_offers_no_form(monkeypatch):
+def test_the_add_device_modal_offers_no_form_without_a_register_map(
+        monkeypatch):
     """
-    There is no write path in this application - queries.py says so and
-    the database grants say so. A form that collects three fields and
-    cannot save them is the worst thing to put in front of a customer,
-    because they will fill it in.
+    This test used to assert the modal had NO form at all, because there
+    was no write path and a form that collects fields it cannot save is
+    the worst thing to put in front of a customer. The form exists now -
+    but the reasoning survives for the case that still cannot be served.
+
+    An install whose products carry no register map has nothing the form
+    could commission, because the addresses to read come from the map and
+    from nowhere else. A shell with no products is exactly that install,
+    and this is what it has to do: say so, rather than offer a dropdown
+    with no entries and six fields that lead to a rejection.
     """
     stub(monkeypatch)
     body = TestClient(create_app(DSN)).get("/").text
 
-    modal = body.split('id="modal-add-device"', 1)[1].split("</div>", 99)[0]
+    modal = body.split('id="modal-add-device"', 1)[1]
+    modal = modal.split("modal-backdrop", 1)[0]
     assert "<input" not in modal
-    assert "Devices are not created here" in body
+    # Whitespace-collapsed, because the copy wraps in the template and a
+    # test that breaks on a reflowed paragraph teaches people to stop
+    # reflowing paragraphs.
+    flat = " ".join(modal.split())
+    assert "carries a register map" in flat
+    assert "no device type to commission" in flat
+    assert "products.toml" in flat
+
+
+def test_the_modal_collects_exactly_what_an_operator_knows(monkeypatch):
+    """
+    Where the instrument is and what it is called. Nothing about
+    registers: there is no field on this form that can put a wrong
+    address on a device, because the addresses come from a map pinned to
+    a datasheet by a test in the product package.
+    """
+    stub(monkeypatch)
+    app = create_app(DSN, _one_product())
+    body = TestClient(app).get("/").text
+    modal = body.split('id="modal-add-device"', 1)[1]
+
+    for field in ("host", "port", "unit_id", "model", "code", "name",
+                  "low", "high"):
+        assert f'name="{field}"' in modal, field
+    for forbidden in ("address", "register", "datasheet_number", "kind",
+                      "scale"):
+        assert f'name="{forbidden}"' not in modal, forbidden
+
+
+def test_the_form_says_which_registers_it_will_read(monkeypatch):
+    """
+    The other half of the same point. The operator cannot CHANGE an
+    address, and they can SEE every one, with the datasheet number it
+    came from - which is what makes "this form cannot set a wrong
+    address" checkable by the person using it rather than only by a test.
+    """
+    stub(monkeypatch)
+    body = TestClient(create_app(DSN, _one_product())).get("/").text
+    assert "40001" in body and "40014" in body
+
+
+def test_the_form_does_not_promise_a_device_appears_instantly(monkeypatch):
+    """
+    A commissioned device sits in the table with no readings until the
+    poller's next reload. Without saying so, the honest behaviour looks
+    like a fault and somebody deletes the device and tries again.
+    """
+    from jetpace_core.web.app import DEVICE_RELOAD_SECONDS
+
+    template = (HERE / "templates" / "_commissioned.html").read_text(
+        encoding="utf-8")
+    assert "reload_seconds" in template
+    assert DEVICE_RELOAD_SECONDS >= 1
+
+
+def _one_product():
+    """
+    The real environment product, for the three tests above only.
+
+    Core's suite is otherwise product-free and should stay that way - but
+    the form is made OF what a product contributes, so a fabricated one
+    would be testing the fabrication. What is asserted here is the
+    mechanism, not the iDP-100's registers, which are pinned in
+    packages/environment.
+    """
+    from jetpace_core.web import products as P
+    return P.load(["environment"])
 
 
 # --- the trend panel -----------------------------------------------------

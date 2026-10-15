@@ -1,65 +1,175 @@
-{# The add-device modal.
+{# The add-device modal: the real form.
 
-   THE DESIGN'S IS A FORM: device ID, device name, location, and an "Add
-   Device" button. There is no write path in this application at all -
-   queries.py says so in its first paragraph, and the database grants the
-   application role append-only on `reading` and nothing on `device`. A
-   form that collects three fields and then cannot save them is the worst
-   thing to put in front of a customer, because they will fill it in.
+   IT USED TO EXPLAIN WHY IT COULD NOT EXIST. The chrome was the design's
+   and the content said devices were commissioned from a gateway sheet,
+   because there was no write path - and the note said the application
+   role "has no write grant on the device tables", which was simply wrong.
+   setup_postgres.py has granted it INSERT on every table except `reading`
+   since the database was first provisioned. The write path was unbuilt,
+   not forbidden.
 
-   So the chrome is the design's, exactly, and the content is the real
-   route: a device is commissioned from the gateway sheet by the
-   provisioning step. That is genuinely what somebody asking "how do I
-   add a meter" needs, and it is one click from where they asked.
+   WHAT THE OPERATOR SUPPLIES is where the instrument is and what it is
+   called: the converter's address, the slave id, the device type, a name,
+   and the low and high set points. WHAT THEY DO NOT supply is anything
+   about registers - which addresses to read, what the values mean, how
+   often to scan - because that comes from the register map in the product
+   package, pinned to the datasheet by a test. There is no field on this
+   form that can put a wrong address on a device.
 
-   When devices become editable in the UI - which needs the user model,
-   because an unattributed change to a register map is not something a
-   GxP site can accept - this becomes the form the design drew. #}
+   TWO STEPS, deliberately. `Check the device` reads it live over Modbus
+   and shows what it is reporting; `Commission` writes the rows. Seeing
+   12 Pa come back before committing is the difference between
+   commissioning an instrument and commissioning a guess - and the reading
+   it was accepted on goes into the audit row, because it is the one
+   measurement nobody can reconstruct afterwards.
+
+   A device that does not answer can still be commissioned - installed and
+   not yet powered is an ordinary case - but only with a reason, which is
+   recorded. #}
 
 {% import "_icons.html" as ico %}
 
 <div class="modal-backdrop" id="modal-add-device" hidden
      role="dialog" aria-modal="true" aria-labelledby="modal-add-device-title">
-  <div class="modal">
+  <div class="modal modal-wide">
     <div class="modal-head">
       <div>
         <span class="eyebrow">Device management</span>
-        <h2 id="modal-add-device-title">Commissioning a device</h2>
+        <h2 id="modal-add-device-title">Add a device</h2>
       </div>
       <button class="icon-button" type="button" data-modal-close
               aria-label="Close">{{ ico.icon('x') }}</button>
     </div>
 
-    <p>
-      Devices are not created here. This dashboard only reads &mdash; the
-      application's database role has no write grant on the device tables
-      &mdash; so a new instrument arrives the same way the existing ones
-      did, from configuration.
-    </p>
+    {% if not device_types %}
+      {# No product in this install sells an instrument with a register
+         map, so there is nothing this form could commission. Energy is
+         in exactly this state: no meter map in the repository yet. Say
+         so, rather than offering an empty dropdown. #}
+      <p>
+        No product in this install carries a register map, so there is no
+        device type to commission. A device type comes from the product
+        that sells the instrument &mdash; check
+        <code>config/products.toml</code>.
+      </p>
+      <div class="modal-actions">
+        <button type="button" data-modal-close>Close</button>
+      </div>
+    {% else %}
 
-    <dl>
-      <div>
-        <dt>1 &middot; Add it to the gateway sheet</dt>
-        <dd>Its code, name, gateway, Modbus unit address and model go in
-            <code>config/prototype.toml</code>, beside the devices already
-            on that bus.</dd>
-      </div>
-      <div>
-        <dt>2 &middot; Provision</dt>
-        <dd>Run the provisioning step. It creates the device row, pins it
-            to the model revision its register map was written against,
-            and records when it was commissioned.</dd>
-      </div>
-      <div>
-        <dt>3 &middot; It appears</dt>
-        <dd>The poller picks it up on its next pass and the table above
-            shows it, offline, until the first reading arrives.</dd>
-      </div>
-    </dl>
+    <form id="add-device-form" class="device-form"
+          hx-post="/partials/commission" hx-target="#commission-result"
+          hx-swap="innerHTML" hx-indicator="#commission-busy">
 
-    <div class="modal-actions">
-      <button type="button" data-modal-close>Close</button>
-      <a class="primary-button" href="/devices">See commissioned devices</a>
-    </div>
+      <fieldset>
+        <legend>Where it is</legend>
+        <div class="field-row">
+          <label class="field field-grow">
+            <span>Converter address</span>
+            <input name="host" type="text" required
+                   placeholder="192.168.1.50" autocomplete="off"
+                   inputmode="decimal">
+            <small>The serial-to-TCP converter the instrument is wired
+                   to.</small>
+          </label>
+          <label class="field field-narrow">
+            <span>Port</span>
+            <input name="port" type="number" min="1" max="65535"
+                   value="{{ default_port }}" required>
+            <small>502 in gateway mode.</small>
+          </label>
+          <label class="field field-narrow">
+            <span>Slave&nbsp;ID</span>
+            <input name="unit_id" type="number" min="1" max="247"
+                   value="1" required>
+            <small>Set on the instrument.</small>
+          </label>
+        </div>
+        <label class="field">
+          <span>Converter name <em>optional</em></span>
+          <input name="gateway_label" type="text" autocomplete="off"
+                 placeholder="Block A panel">
+          <small>Only used when this converter is new to the system.
+                 An existing one keeps its name and its bus timings.</small>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>What it is</legend>
+        <div class="field-row">
+          <label class="field field-grow">
+            <span>Device type</span>
+            <span class="select-wrap">
+              <select name="model" required
+                      hx-get="/partials/device-type"
+                      hx-target="#type-note" hx-swap="innerHTML"
+                      hx-trigger="change">
+                {% for code, entry in device_types.items() %}
+                  <option value="{{ code }}">{{ entry.title }}</option>
+                {% endfor %}
+              </select>
+              {{ ico.icon('chevron') }}
+            </span>
+          </label>
+          <label class="field field-code">
+            <span>Code</span>
+            <input id="field-code" name="code" type="text" required
+                   maxlength="31" value="{{ suggested_code }}"
+                   autocomplete="off"
+                   pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,30}">
+            <small>Permanent. Used in reports.</small>
+          </label>
+        </div>
+        <label class="field">
+          <span>Name or location</span>
+          <input name="name" type="text" required autocomplete="off"
+                 placeholder="Filling room corridor">
+        </label>
+        <p class="field-note" id="type-note">{% include "_type_note.html" %}</p>
+      </fieldset>
+
+      <fieldset id="limit-fields">
+        <legend>Set points <em>optional</em></legend>
+        <div class="field-row">
+          <label class="field">
+            <span>LSP <small class="unit">{{ limit_unit }}</small></span>
+            <input name="low" type="text" inputmode="decimal"
+                   autocomplete="off" placeholder="e.g. -20">
+          </label>
+          <label class="field">
+            <span>HSP <small class="unit">{{ limit_unit }}</small></span>
+            <input name="high" type="text" inputmode="decimal"
+                   autocomplete="off" placeholder="e.g. -5">
+          </label>
+        </div>
+        <small class="field-help">
+          Leave a side blank for no limit on it. A set point is never
+          edited &mdash; changing one records a new value and keeps the
+          old, so a reading stays judged against the limit that applied
+          when it was taken.
+        </small>
+      </fieldset>
+
+      <div class="probe-row">
+        <button type="button" class="ghost-button"
+                hx-post="/partials/probe"
+                hx-include="#add-device-form"
+                hx-target="#probe-result" hx-swap="innerHTML"
+                hx-indicator="#probe-busy">
+          {{ ico.icon('activity') }} Check the device
+        </button>
+        <span class="htmx-indicator" id="probe-busy">reading&hellip;</span>
+      </div>
+      <div id="probe-result" aria-live="polite"></div>
+
+      <div class="modal-actions">
+        <span class="htmx-indicator" id="commission-busy">saving&hellip;</span>
+        <button type="button" data-modal-close>Cancel</button>
+        <button type="submit" class="primary-button">Commission</button>
+      </div>
+    </form>
+
+    <div id="commission-result" aria-live="polite"></div>
+    {% endif %}
   </div>
 </div>

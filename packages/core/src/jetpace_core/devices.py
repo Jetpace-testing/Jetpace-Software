@@ -27,6 +27,7 @@ a clock, so every test over it runs with none of those.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 
@@ -107,8 +108,19 @@ class DeviceModel:
 KINDS = ("energy", "pressure", "temperature", "humidity",
          "particle", "gas", "flow", "velocity")
 
+# A device code reaches three places that constrain it: the URL
+# /devices/<code>, an MQTT topic segment, and a CSV export column. Letters,
+# digits and hyphens are safe in all three without escaping, and escaping
+# an identifier differently in three places is how one of them ends up
+# wrong.
+CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,30}")
+CODE_PREFIX = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,15}")
+
 # Mirrors the CHECK on parameter.aggregation, likewise.
 AGGREGATIONS = ("counter", "instantaneous")
+
+# Mirrors the CHECK on device.scan_class, likewise.
+SCAN_CLASSES = ("counter", "instantaneous", "critical")
 
 
 @dataclass(frozen=True)
@@ -176,6 +188,21 @@ class DeviceType:
     # transparent mode it is one port per device instead, and the operator
     # types the port - so this is a default on the form, not a constant.
     default_port: int = 502
+    # What the form SUGGESTS as a device code: this plus the lowest free
+    # number, "DP-004". A suggestion and not a rule, because the code is
+    # stable forever and the site's own naming wins - but a suggestion
+    # that matches the devices already there is worth a great deal when
+    # somebody is commissioning the fourth of thirty.
+    #
+    # Here rather than derived from the model code, because "iDP-100" ->
+    # "DP" needs a rule about leading lowercase letters that would be
+    # wrong for the next instrument.
+    code_prefix: str = ""
+    # device.scan_class. 'critical' for an instrument whose reading is
+    # the product's reason for existing, which is a product's call: a
+    # pressure cascade in a sterile corridor is not a trend, it is the
+    # thing the room is qualified on.
+    scan_class: str = "instantaneous"
 
     def __post_init__(self) -> None:
         if self.kind not in KINDS:
@@ -206,6 +233,17 @@ class DeviceType:
             raise ValueError(
                 f"device type {self.model.code!r} has default port "
                 f"{self.default_port}.")
+        if self.scan_class not in SCAN_CLASSES:
+            raise ValueError(
+                f"device type {self.model.code!r} has scan class "
+                f"{self.scan_class!r}; device.scan_class accepts "
+                f"{', '.join(SCAN_CLASSES)}.")
+        if self.code_prefix and not CODE_PREFIX.fullmatch(self.code_prefix):
+            raise ValueError(
+                f"device type {self.model.code!r} suggests codes beginning "
+                f"{self.code_prefix!r}. A device code is used in a URL and "
+                f"in an MQTT topic, so the prefix has to be letters, digits "
+                f"and hyphens.")
 
     @property
     def code(self) -> str:

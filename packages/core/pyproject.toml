@@ -9,9 +9,15 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn>=0.32",
     "jinja2>=3.1",
+    # Form parsing for the commissioning POSTs. FastAPI's Form() refuses
+    # to build a route without it, even for the urlencoded bodies HTMX
+    # actually sends. Apache-2.0, so it redistributes commercially -
+    # architecture.md section 7.
+    "python-multipart>=0.0.9",
     "paho-mqtt>=2.1",
     "cryptography>=43",
     "pywin32>=306 ; sys_platform == 'win32'",
+    "python-multipart>=0.0.9",
 ]
 
 [build-system]

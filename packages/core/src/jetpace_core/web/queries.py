@@ -708,6 +708,26 @@ ORDER  BY l.param, l.set_at DESC
 """
 
 
+TENANT = "SELECT id FROM tenant ORDER BY id LIMIT 1"
+
+
+def tenant_id(conn: psycopg.Connection) -> int:
+    """
+    The tenant this install serves.
+
+    One per install - architecture.md section 4 says every table carries
+    tenant_id from the first migration because retrofitting tenancy is
+    the refactor that is always attempted under commercial pressure, not
+    because anything multi-tenant exists yet. Zero is returned for an
+    empty database so a caller that only needs it to scope a LIKE does
+    not have to handle None.
+    """
+    with conn.cursor() as cur:
+        cur.execute(TENANT)
+        row = cur.fetchone()
+    return row["id"] if row else 0
+
+
 def limits(conn: psycopg.Connection) -> dict[tuple[str, str], dict]:
     """
     Every limit in force, keyed by (device code, parameter key).

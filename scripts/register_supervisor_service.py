@@ -207,10 +207,26 @@ def write_config(port: int, with_sim: bool, sim_units: int,
             "required": False,       # its death must not fail a health gate
         })
 
+    # --devices db, not the gateway sheet. The device list comes from the
+    # device and gateway tables and is re-read every few seconds, which is
+    # what makes an instrument commissioned from the dashboard start being
+    # polled without anybody restarting this service (debt #3,
+    # architecture.md §10 step 4).
+    #
+    # The file path still exists and is still the CLI default, because a
+    # developer wants a checkout to behave the same way twice and because
+    # config/prototype.toml is what seed_prototype.py reads. An INSTALL
+    # wants the database, because an install has an operator and no text
+    # editor.
+    #
+    # The reload interval is spelled out rather than left to default so
+    # that it reads against web/app.py's DEVICE_RELOAD_SECONDS, which is
+    # the number the commissioning form promises an operator. Nothing can
+    # discover it across the two processes; if one changes, change both.
     children += [
         {"name": "poller",
          "args": [py, str(ROOT / "scripts" / "run_poller.py"),
-                  "--sink", "mqtt"]},
+                  "--sink", "mqtt", "--devices", "db", "--reload", "10"]},
         {"name": "ingest",
          "args": [py, str(ROOT / "scripts" / "run_ingest.py")]},
     ]
@@ -495,6 +511,15 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--unregister", action="store_true")
     ap.add_argument("--status", action="store_true")
+    ap.add_argument("--config-only", action="store_true",
+                    help="rewrite supervisor.json and nothing else. The "
+                         "child list is a FILE the service reads at start; "
+                         "the registry holds only the service account, the "
+                         "executable and PYTHONPATH. Changing which "
+                         "arguments the poller gets therefore needs a "
+                         "restart, not a re-registration - and a "
+                         "re-registration is the one operation here that "
+                         "can take the stack down")
     ap.add_argument("--port", type=int, default=1885)
     ap.add_argument("--with-sim", action="store_true",
                     help="also run the device simulator (development)")
@@ -528,6 +553,17 @@ def main() -> None:
         if not value.isdigit():
             die(f"--product-port {item!r} is not SLUG=PORT")
         pinned[slug.strip()] = int(value)
+
+    if args.config_only:
+        print(f"\nRewriting {CONFIG_FILE.name}\n")
+        write_config(args.port, args.with_sim, args.sim_units,
+                     product_host=args.product_host, product_ports=pinned)
+        # It is read at start, so nothing has changed yet. Saying so is
+        # the point: a config written and not applied looks exactly like
+        # a config that was applied.
+        print(f"  Not applied yet. In an elevated shell:\n")
+        print(f"    Restart-Service {SERVICE}\n")
+        return
 
     print(f"\nRegistering {SERVICE}\n")
     register(args.account, args.port, args.with_sim, args.sim_units,

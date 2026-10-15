@@ -428,3 +428,50 @@ def test_the_live_region_accepts_the_nudge_the_form_sends():
     trigger = trigger.split('"', 1)[0]
     assert "refresh" in trigger
     assert 'htmx.trigger("#live", "refresh")' in index
+
+
+def test_the_promised_reload_matches_what_the_service_actually_runs():
+    """
+    The form tells an operator the device will be picked up "within N
+    seconds". N is web/app.py's DEVICE_RELOAD_SECONDS; what actually
+    decides it is --reload on the poller child in supervisor.json. The
+    two are in different processes and nothing can discover the other, so
+    the only thing keeping them honest is this.
+
+    A promise of ten seconds against a poller reloading every sixty is
+    how a working feature gets reported as broken.
+    """
+    import json
+
+    from jetpace_core.web.app import DEVICE_RELOAD_SECONDS
+
+    root = Path(__file__).resolve().parents[3]
+    config = root / "supervisor.json"
+    if not config.exists():
+        pytest.skip("no supervisor.json in this checkout")
+
+    children = json.loads(config.read_text(encoding="utf-8"))["children"]
+    poller = next((c for c in children if c["name"] == "poller"), None)
+    if poller is None or "--devices" not in poller["args"]:
+        pytest.skip("this install still reads its device list from a file")
+
+    args = poller["args"]
+    assert args[args.index("--devices") + 1] == "db"
+    reload_s = float(args[args.index("--reload") + 1])
+    assert reload_s <= DEVICE_RELOAD_SECONDS, (
+        f"the form promises {DEVICE_RELOAD_SECONDS}s and the poller "
+        f"reloads every {reload_s}s")
+
+
+def test_the_registration_script_can_change_the_child_list_alone():
+    """
+    The child list is a file the service reads at start; the registry
+    holds the account, the executable and PYTHONPATH. Re-registering to
+    change a poller argument is the one operation here that can take the
+    live stack down, and it should not be the only way.
+    """
+    root = Path(__file__).resolve().parents[3]
+    script = (root / "scripts" / "register_supervisor_service.py").read_text(
+        encoding="utf-8")
+    assert '"--config-only"' in script
+    assert "Restart-Service" in script

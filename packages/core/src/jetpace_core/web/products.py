@@ -43,6 +43,7 @@ from typing import Any
 from fastapi import APIRouter
 from fastapi.templating import Jinja2Templates
 
+from .. import devices as devices_
 from .. import paths
 
 # Used only when configuration does not say. These are strings, not
@@ -208,6 +209,19 @@ class Product:
     # the specification, which is the product's.
     events: Callable[[Any], list[Event]] | None = None
 
+    # Optional: the instruments this product sells, which is what the
+    # commissioning form's "device type" dropdown is made of. A plain
+    # tuple rather than a callable, unlike `tiles` and `events`: a
+    # register map needs no connection and does not change between
+    # requests, and a tuple validated at import means a product with a
+    # typo in a register key fails when the application starts rather
+    # than when a customer submits the form.
+    #
+    # A product with none contributes no types and the form says so,
+    # which is the correct state for energy today: there is no meter
+    # register map in the repository yet.
+    device_types: tuple[devices_.DeviceType, ...] = ()
+
     def __post_init__(self) -> None:
         if not self.slug.isascii() or not self.slug.isalpha():
             raise ValueError(
@@ -282,6 +296,36 @@ def load(slugs: Sequence[str]) -> list[Product]:
     if len(set(slugs_seen)) != len(slugs_seen):
         raise SystemExit(f"two products claim the same slug: {slugs_seen}")
     return loaded
+
+
+def device_types(
+        products: Sequence[Product]) -> dict[str, tuple[str, devices_.DeviceType]]:
+    """
+    Every instrument the loaded products sell, keyed by model code.
+
+    Keyed by code because that is what the form posts and what
+    `device_model.code` stores, and carrying the slug alongside because an
+    error message naming the product is worth far more than one naming
+    only the model.
+
+    A collision is fatal at startup rather than resolved by order. Two
+    products offering a map for the same model code have disagreed about
+    an instrument's registers, and picking whichever loaded first would
+    decide which datasheet a site is reading its devices with - silently,
+    and differently depending on config/products.toml's ordering.
+    """
+    collected: dict[str, tuple[str, devices_.DeviceType]] = {}
+    for product in products:
+        for device_type in product.device_types:
+            existing = collected.get(device_type.code)
+            if existing is not None:
+                raise SystemExit(
+                    f"the {existing[0]!r} and {product.slug!r} products both "
+                    f"describe the device model {device_type.code!r}. One "
+                    f"register map per model, or a device would be read with "
+                    f"whichever product happened to load first.")
+            collected[device_type.code] = (product.slug, device_type)
+    return collected
 
 
 def enabled(config_dir: Path | None = None) -> tuple[str, ...] | None:

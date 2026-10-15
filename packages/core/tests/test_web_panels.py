@@ -579,17 +579,71 @@ def _one_product():
 
 # --- the trend panel -----------------------------------------------------
 
-def test_the_trend_panel_claims_no_limits_it_does_not_have():
+def test_the_overview_trend_panel_draws_no_limits():
     """
-    The design's legend has "Upper limit" and "Lower limit", drawn as
-    dashed thresholds. There are no limits anywhere in this schema; a
-    threshold line somebody could read a specification off would be the
-    most dangerous thing on the page.
+    The design's legend has "Upper limit" and "Lower limit" as dashed
+    thresholds. The limits table exists now (migration 0005) and the
+    DEVICE page draws them - but this panel still must not, and the
+    reason has changed rather than gone away.
+
+    This chart plots several devices at once. Each has its own set
+    points, so "the upper limit" is not one line here; drawing one per
+    device turns a readable trend into a dozen dashed horizontals, and
+    drawing a single pair would be a specification that belongs to
+    whichever device happened to be first.
+
+    What a limit is worth reading against is one instrument, which is
+    /devices/<code>.
     """
     markup = without_comments(TEMPLATES / "_trend.html")
     assert "Upper limit" not in markup
     assert "Lower limit" not in markup
     assert "Range in each bucket" in markup
+
+
+def test_the_device_page_draws_the_set_points_it_was_given():
+    """
+    The other side of the same point, and the thing §10 listed as
+    blocked: "upper and lower limit lines on the trend - same missing
+    limits table as the alarm model".
+    """
+    page = (TEMPLATES / "device.html").read_text(encoding="utf-8")
+    assert 'name: "LSP"' in page and 'name: "HSP"' in page
+    assert "data-low" in page and "data-high" in page
+
+
+def test_a_set_point_of_zero_is_not_the_same_as_no_set_point():
+    """
+    Zero is a real and common set point on a pressure cascade - it is the
+    boundary a cascade is specified around - so "absent" and "0" have to
+    stay distinguishable all the way to the chart.
+
+    Both of the obvious conversions get this wrong in opposite
+    directions: Number("") is 0, which would invent a limit; and
+    parseFloat(undefined) is NaN, which ECharts draws as a line at an
+    unpredictable place rather than not at all.
+    """
+    page = (TEMPLATES / "device.html").read_text(encoding="utf-8")
+    assert 'raw === undefined || raw === ""' in page
+    assert "state.low !== null" in page
+    assert "state.high !== null" in page
+
+
+def test_the_tiles_show_a_set_point_without_judging_it():
+    """
+    A tile says "LSP -20 · HSP -5 Pa" and does not say "in spec" or turn
+    green. A single spot reading against a limit is not a compliance
+    statement: an excursion has a duration, an acknowledgement and
+    somebody's name on it, and none of those exist (§10 step 6). The
+    numbers are a fact; a colour would be a claim.
+    """
+    markup = without_comments(TEMPLATES / "_device_points.html")
+    assert "LSP" in markup and "HSP" in markup
+    assert "in spec" not in markup
+    assert "tile-limit" in markup
+    # `alarm` on a tile is the existing "has gone silent" state, which is
+    # about the device answering and not about the reading's value.
+    assert "' alarm' if not p.fresh" in markup
 
 
 def test_one_select_drives_both_the_card_and_the_trend():

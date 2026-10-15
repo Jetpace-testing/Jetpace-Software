@@ -1073,6 +1073,12 @@ def create_app(dsn: str,
                 "device": found,
                 "points": queries.device_points(conn, code),
                 "ranges": RANGES,
+                # The set points in force, per parameter. Rendered onto
+                # the chips rather than into the chart, so the chart's
+                # own code reads them off whichever parameter is
+                # selected without a second request - and so a parameter
+                # that has no limit simply carries none.
+                "limits": queries.device_limits(conn, code),
             })
 
     @app.get("/partials/device-points/{code}", response_class=HTMLResponse)
@@ -1080,6 +1086,13 @@ def create_app(dsn: str,
         with queries.connect(dsn) as conn:
             return templates.TemplateResponse(request, "_device_points.html", {
                 "points": queries.device_points(conn, code),
+                # Polled every few seconds alongside the values. A set
+                # point is append-only and changes about once a year, so
+                # re-reading it here is one index lookup per parameter -
+                # and it means a limit changed in another tab is on this
+                # one within the poll interval, rather than until
+                # somebody reloads.
+                "limits": queries.device_limits(conn, code),
             })
 
     @app.get("/api/trend")

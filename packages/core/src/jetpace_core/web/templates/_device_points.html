@@ -1,6 +1,14 @@
 {# One tile per parameter this device actually reports. Driven by the
    readings rather than by the model, so a point that has never answered
-   is absent instead of showing a confident blank. #}
+   is absent instead of showing a confident blank.
+
+   THE SET POINTS ARE SHOWN AND NOT JUDGED. The tile says "LSP -20 ·
+   HSP -5 Pa" and does not say "in spec" or colour itself green, because
+   a single spot reading against a limit is not a compliance statement:
+   an excursion has a duration, an acknowledgement and somebody's name on
+   it, and none of those exist yet (architecture.md section 10 step 6).
+   Showing the numbers is a fact the operator can read; colouring the
+   tile would be a claim the system cannot stand behind. #}
 
 <dl class="tiles">
   {% for p in points %}
@@ -23,6 +31,15 @@
           <span class="dim">{{ p.age_s }} s ago &middot; {{ p.aggregation }}</span>
         {% endif %}
       </p>
+      {% set limit = limits.get(p.key) if limits else None %}
+      {% if limit %}
+        <p class="tile-limit">
+          {% if limit.low is not none %}LSP {{ '%g'|format(limit.low) }}{% endif %}
+          {%- if limit.low is not none and limit.high is not none %} &middot; {% endif %}
+          {%- if limit.high is not none %}HSP {{ '%g'|format(limit.high) }}{% endif %}
+          <small>{{ p.unit }}</small>
+        </p>
+      {% endif %}
     </div>
   {% else %}
     <p class="dim">This device has never reported a reading.</p>

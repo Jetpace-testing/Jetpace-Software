@@ -58,10 +58,21 @@
     <div class="controls">
       <div class="group" role="group" aria-label="Parameter">
         {% for p in points %}
+          {% set limit = limits.get(p.key) if limits else None %}
           <button class="chip{{ ' current' if loop.first }}" type="button"
                   data-param="{{ p.key }}"
                   data-unit="{{ p.unit }}"
                   data-decimals="{{ p.decimals }}"
+                  {# The set points in force for THIS parameter, so
+                     switching chips redraws the right thresholds without
+                     a second request. Absent when there is no limit,
+                     which is how the chart tells "no limit" from "a
+                     limit of zero" - a distinction that matters on a
+                     pressure cascade, where zero is a real set point. #}
+                  {% if limit and limit.low is not none %}
+                    data-low="{{ limit.low }}"{% endif %}
+                  {% if limit and limit.high is not none %}
+                    data-high="{{ limit.high }}"{% endif %}
                   {# How the parameter is measured, not which product it
                      belongs to. The chart uses it to decide whether zero
                      is a meaningful reference - see the note below. #}
@@ -105,7 +116,16 @@ ready(function () {
 
   var chart = registerChart(echarts.init(el));
   var state = { param: null, unit: "", decimals: 1, aggregation: "",
-                hours: 24, rows: [] };
+                low: null, high: null, hours: 24, rows: [] };
+
+  // An absent data-low is "no limit on that side"; a data-low of "0" is a
+  // set point of zero, which on a pressure cascade is a real and common
+  // one. parseFloat("") is NaN and Number("") is 0, so neither can be
+  // used directly on a dataset value that may be missing.
+  function setPoint(el, name) {
+    var raw = el.dataset[name];
+    return raw === undefined || raw === "" ? null : parseFloat(raw);
+  }
 
   var first = document.querySelector("[data-param]");
   if (first) {
@@ -113,6 +133,8 @@ ready(function () {
     state.unit = first.dataset.unit;
     state.decimals = parseInt(first.dataset.decimals, 10);
     state.aggregation = first.dataset.aggregation || "";
+    state.low = setPoint(first, "low");
+    state.high = setPoint(first, "high");
   }
 
   function fmt(v) {
@@ -195,14 +217,70 @@ ready(function () {
     // else", which was the shared device page knowing about cleanrooms.
     // Behaviour is unchanged: a kWh counter never approaches zero, so it
     // never drew the line anyway.
+    var marks = [];
     var lows = rows.map(function (r) { return r[2]; });
     if (state.aggregation !== "counter"
         && lows.length && Math.min.apply(null, lows) <= 2) {
+      marks.push({ yAxis: 0, name: "0",
+                   lineStyle: { color: cssVar("--critical") } });
+    }
+
+    // The set points, when this parameter has any.
+    //
+    // The design drew these from the start and they could not be built:
+    // there was no limits table, and architecture.md listed "a threshold
+    // line somebody could read a specification off" as the most
+    // dangerous thing that could be put on this page. The table exists
+    // now (migration 0005), the numbers come from it, and the label says
+    // LSP or HSP so nobody has to guess which line is which.
+    //
+    // Drawn whatever the aggregation. A counter with a maximum is an
+    // ordinary case - a meter the tariff is banded on - even though the
+    // zero line above is only meaningful for an instantaneous value.
+    //
+    // NOT compared against. The chart draws where the limit is and the
+    // reading is visibly inside or outside it; it does not shade an
+    // excursion or count one, because an excursion has a duration and an
+    // acknowledgement and neither exists yet (§10 step 6).
+    if (state.low !== null) {
+      marks.push({ yAxis: state.low, name: "LSP",
+                   lineStyle: { color: cssVar("--warning") } });
+    }
+    if (state.high !== null) {
+      marks.push({ yAxis: state.high, name: "HSP",
+                   lineStyle: { color: cssVar("--warning") } });
+    }
+
+    // A SET POINT OUTSIDE THE DATA MUST STILL BE ON THE CHART.
+    //
+    // ECharts scales the axis to the series, so a cascade reading around
+    // +10 Pa with an LSP of -20 drew the HSP line and silently clipped
+    // the LSP - leaving an operator looking at a trend with one
+    // threshold on it, from which the only reasonable conclusion is that
+    // there is no low limit. Found by looking at the rendered chart;
+    // nothing in the markup was wrong.
+    //
+    // Widening the axis to contain every line means a distant limit
+    // compresses the readings, which is the right trade: the reason to
+    // draw a limit at all is to show where the reading sits relative to
+    // it, and a limit off-screen shows nothing while looking complete.
+    if (marks.length) {
+      var bounds = marks.map(function (m) { return m.yAxis; });
+      opt.yAxis.min = function (extent) {
+        return Math.min.apply(null, bounds.concat([extent.min]));
+      };
+      opt.yAxis.max = function (extent) {
+        return Math.max.apply(null, bounds.concat([extent.max]));
+      };
       opt.series[2].markLine = {
         silent: true, symbol: "none",
-        label: { formatter: "0", color: cssVar("--muted"), fontSize: typeAt(10) },
-        lineStyle: { color: cssVar("--critical"), type: "dashed", width: 1 },
-        data: [{ yAxis: 0 }]
+        label: {
+          formatter: function (m) { return m.name; },
+          color: cssVar("--muted"), fontSize: typeAt(10),
+          position: "insideEndTop"
+        },
+        lineStyle: { type: "dashed", width: 1 },
+        data: marks
       };
     }
 
@@ -262,6 +340,8 @@ ready(function () {
     state.unit = b.dataset.unit;
     state.decimals = parseInt(b.dataset.decimals, 10);
     state.aggregation = b.dataset.aggregation || "";
+    state.low = setPoint(b, "low");
+    state.high = setPoint(b, "high");
   });
   wire("data-hours", function (b) {
     state.hours = parseFloat(b.dataset.hours);

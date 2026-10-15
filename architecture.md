@@ -602,7 +602,7 @@ Honest register of where the repo and the specification disagree.
 |---|---|---|
 | 1 | ~~Product logic in core~~ — **fixed, and now enforced.** `packages/energy` and `packages/environment` are workspace members. `dp`, `kwh_import`, both product templates, the cleanroom CSS and the iDP-100 map have all left core | `test_core_names_no_product.py` scans core's source for the parameter keys, for an import of either product, for a product selector in `app.css` and for a product link in `_base.html`. The two exceptions it deliberately does not cover are debt #12 and #3, both recorded |
 | 2 | **No declared `Sink` Protocol.** `sinks.py` says "two implementations" and there are three; the shape is duck-typed and unenforced | The seam is the most load-bearing boundary in the system and nothing checks it. A `typing.Protocol` plus a conformance test would |
-| 3 | Device list in `config/prototype.toml`, not the database | §6. Needs a dry-run diff when it moves |
+| 3 | ~~Device list in `config/prototype.toml`~~ — **fixed.** `jetpace poller --devices db` reads the gateway, device and device_parameter tables and re-reads them every ten seconds; supervisor.json runs it that way. The file is still the CLI default and still what `seed_prototype.py` reads | The dry-run diff this entry asked for turned out not to be the shape of the problem: nothing reconciles a file against the database any more, because the database IS the list. What replaced it is `Plan.unreadable`, which names every device no loaded product has a register map for rather than quietly not polling it |
 | 4 | Mosquitto is not a Windows service | Dies on reboot; the same treatment as PostgreSQL would fix it |
 | 5 | OTA cannot replace the supervisor itself | A running executable holds its own file open, so `REPLACEABLE` is `app/` + `version.json` only. Supervisor changes go out through the installer — which is why it must stay small and stay still |
 | 6 | `DP_PV` scaling unconfirmed against a real device | A scale error reaches a batch record |
@@ -618,6 +618,8 @@ Honest register of where the repo and the specification disagree.
 | 16 | **Several dashboards, one health gate.** The supervisor watches one `health_url`; a single product instance failing is caught only by child restart | Each instance answers for itself on its own port, but `Supervisor.from_config` takes one URL. Widening it means editing `supervisor.py`, which debt #5 says can only reach a site through the installer — so this waits for a reason better than tidiness |
 | 17 | **The exceptions panel's suspect query has no index behind it.** `reading.quality` is unindexed, so `SUSPECT` is a scan of whatever window it is given — bounded to 6 hours and polled every 30 s, which is affordable on this prototype and will not be on a 400-meter site | The fix is one line, `CREATE INDEX ... ON reading (ts DESC) WHERE quality <> 0`, and it is cheap because almost no row qualifies. It is a migration against a running install, which is not something to slip into a screen build — so it is recorded here and goes out with the next schema change |
 | 18 | **No report generator.** The overview's panel offers CSV exports produced on request, not the scheduled, signed PDFs the design draws | A GxP site needs a report with a name on it, which needs the user model (§10). The exports are real and bounded; what is missing is attribution and scheduling, not data |
+| 20 | **A commissioned device has nobody's name on it.** `audit.actor` and `device_limit.set_by` are written NULL, because there is no user model (§10) | The columns exist and are honestly empty, so the first login needs no migration. Until then the audit log answers "what changed and when" and not "who" — which is most of the value and not all of it |
+| 21 | **The form commissions into one site, and refuses if there are two.** `writes.one_site` | An install serves one customer at one site and there is no site selector anywhere. Filing a device against the wrong site would hide it from the right one's reports with nothing on screen having asked, so it refuses rather than picking the first |
 | 19 | **Three polled regions on the overview, one connection each.** `/partials/live` (5 s, four panels via out-of-band swaps), `/partials/device-card` (15 s) and `/partials/exceptions` (30 s) | Each request opens its own connection — `queries.connect` has no pool. Fine at one dashboard; three product instances on one machine is nine connections of churn, and a pooler is the answer before a site with several operators |
 
 ---
@@ -636,7 +638,11 @@ Immediate order:
 3. ~~**Split the product logic out of core**~~ — debt #1 and #8 done; `energy`
    and `environment` are packages and core cannot reach either. Debt #2, the
    declared `Sink` Protocol, was listed with it and is still open.
-4. **Device list into the database** with a dry-run diff.
+4. ~~**Device list into the database**~~ — done, and with a
+   commissioning form rather than the dry-run diff this line expected. A
+   device is added from the dashboard: converter address, slave id, device
+   type, name and set points, probed live over Modbus before the rows are
+   written. See the seam note in §3 and debt #3.
 5. **Mosquitto as a service.**
 6. **The alarm model.** Not cosmetic, and now the single largest gap the
    frontend keeps running into. The Figma design's first screen has an Active
@@ -657,10 +663,10 @@ person does not take the design as a to-do list:
 |---|---|
 | A floor plan with named zones at fixed coordinates | There is no room, zone or coordinate in the schema — a device belongs to a gateway. The panel groups by gateway, which is a real area, and lays the zones out rather than positioning them |
 | Temperature, humidity and pressure columns on every device row | Its sample data has all three on every device; real instruments do not. The reading column follows whatever parameter each device actually has |
-| An Add Device form | The application has no write path at all; the app role's grant on `reading` is append-only and it has none on `device`. The modal explains commissioning instead. A real form needs the user model, because an unattributed change to a register map is not something a validated site can accept |
+| ~~An Add Device form~~ | **Built.** The claim in this row was wrong twice over: the app role has held INSERT on every table except `reading` since the database was first provisioned, and a register map cannot be changed from the form at all — the addresses come from the product package, pinned to a datasheet by a test, and the form has no field that can reach them. What it does collect is where the instrument is and what it is called. It remains unattributed (debt #20) |
 | Three finished PDF reports with file sizes | Debt #18 |
-| Upper and lower limit lines on the trend | Same missing limits table as the alarm model. A threshold somebody could read a specification off would be the most dangerous thing on the page |
-| "Range 18–24 °C" on each parameter card | Likewise. The cards show the observed 24-hour range instead, labelled as observed |
+| ~~Upper and lower limit lines on the trend~~ | **Built**, on the DEVICE page, from `device_limit` (0005). Not on the overview's trend, which plots several devices at once: "the upper limit" is not one line there, and drawing a single pair would be a specification belonging to whichever device happened to be first. The axis is widened to contain every threshold, because a set point outside the data was being clipped in silence — leaving one line on the chart, from which the only reasonable conclusion is that there is no other limit |
+| "Range 18–24 °C" on each parameter card | Still observed-range on the OVERVIEW cards, which are about a device answering. The device page's parameter tiles now show the set points in force beside the reading, as `LSP −20 · HSP −5 Pa` — stated and not judged: no "in spec", no green. A spot reading against a limit is not a compliance statement, because an excursion has a duration and an acknowledgement and neither exists yet |
 | 7–10px type throughout | Readable on a 27-inch mockup, not on a plant PC at arm's length. `app.css` carries a `--t-N` ramp where N is the design's size and the value is ours, one step larger; checking a declaration against the Figma file still works, and the scale moves from one block |
 | `repeat(7, …)` for the figures row | The design has exactly seven figures. We have four plus whatever the loaded products contribute — four, seven or nine — so the column count is computed per install and the rows are balanced rather than filled |
 

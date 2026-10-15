@@ -1090,6 +1090,17 @@ a.code { font-variant-numeric: tabular-nums; font-weight: 600; }
   border-color: rgba(240, 101, 106, .34);
 }
 
+/* The set points on a parameter tile. Smaller than the reading and in
+ * secondary ink, because the reading is the measurement and the limit is
+ * the context: a tile where the two compete makes somebody read the wrong
+ * number at a glance. Tabular figures so -20 and -5 line up between
+ * tiles. */
+.tile-limit {
+  margin: 2px 0 0; font-size: var(--t-9); color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+}
+.tile-limit small { color: var(--muted); }
+
 @media (max-width: 560px) {
   /* One field per line below this, because an 82px port box beside a
    * 190px address box stops being readable before it stops fitting. */

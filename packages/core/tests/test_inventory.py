@@ -340,12 +340,19 @@ def test_reading_the_device_list_does_not_load_a_web_framework():
         "      if m in sys.modules];"
         "print(','.join(bad))"
     )
-    result = subprocess.run(
-        [sys.executable, "-c", probe],
-        capture_output=True, text=True,
-        env={**__import__("os").environ,
-             "PYTHONPATH": __import__("os").pathsep.join(sys.path)},
-    )
+    # TIMEOUT, because subprocess.run without one waits for ever. A child
+    # that blocks - on an import, on a lock, on a machine under memory
+    # pressure - turns this into a test suite that never finishes and
+    # never says why, which is a worse failure than the one it checks for.
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", probe],
+            capture_output=True, text=True, timeout=60,
+            env={**__import__("os").environ,
+                 "PYTHONPATH": __import__("os").pathsep.join(sys.path)},
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail("the import probe did not finish in 60 s")
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "", (
         f"the poller's device list pulled in {result.stdout.strip()}")

@@ -714,6 +714,13 @@ BEGIN
     IF to_regclass('public.audit') IS NOT NULL THEN
         REVOKE UPDATE, DELETE ON audit FROM {APP_ROLE};
     END IF;
+    -- A user is DISABLED, never deleted (0008). An audit row five years
+    -- old names its actor, and "who was that" has to stay answerable when
+    -- somebody reads a batch record. UPDATE stays: a password change, a
+    -- lockout counter and a disable are all updates.
+    IF to_regclass('public.app_user') IS NOT NULL THEN
+        REVOKE DELETE ON app_user FROM {APP_ROLE};
+    END IF;
 END
 $$;
 

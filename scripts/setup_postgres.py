@@ -692,6 +692,31 @@ GRANT EXECUTE                       ON ALL FUNCTIONS  IN SCHEMA public TO {APP_R
 -- role, so ageing data out still works.
 REVOKE UPDATE, DELETE ON reading FROM {APP_ROLE};
 
+-- The same rule, for the same reason, on the two tables 0005 adds.
+--
+--   device_limit  a set point is never edited; changing LSP inserts a
+--                 second row and the one in force is the latest. Allowing
+--                 UPDATE would let today's limit silently re-judge last
+--                 month's readings.
+--   audit         the record of who changed what, which is worth nothing
+--                 if the thing being audited can rewrite it.
+--
+-- Guarded on existence rather than assumed, because ON_ERROR_STOP is set
+-- and this block also runs against databases that are behind: migrate()
+-- precedes this on every path today, and a REVOKE that aborts the whole
+-- grant script the first time that stops being true would leave an
+-- install with no privileges at all.
+DO $$
+BEGIN
+    IF to_regclass('public.device_limit') IS NOT NULL THEN
+        REVOKE UPDATE, DELETE ON device_limit FROM {APP_ROLE};
+    END IF;
+    IF to_regclass('public.audit') IS NOT NULL THEN
+        REVOKE UPDATE, DELETE ON audit FROM {APP_ROLE};
+    END IF;
+END
+$$;
+
 -- Objects created by future migrations are covered too, so this does not
 -- have to be remembered on every schema change.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
@@ -797,10 +822,26 @@ def main() -> None:
     ap.add_argument("--start", action="store_true")
     ap.add_argument("--stop", action="store_true")
     ap.add_argument("--status", action="store_true")
+    ap.add_argument("--migrate", action="store_true",
+                    help="apply pending migrations and re-apply the grants "
+                         "on a database that already exists, without any of "
+                         "the install steps")
     args = ap.parse_args()
 
     if args.status:
         return status()
+    if args.migrate:
+        # Both, always, and in this order. A migration that adds a table
+        # the grants have something to say about - 0005 adds two - leaves
+        # the application role holding whatever ALTER DEFAULT PRIVILEGES
+        # handed it, which for device_limit and audit is more than it
+        # should have. Running migrate() alone would therefore produce an
+        # install whose append-only tables are not append-only, and say
+        # nothing about it.
+        ensure_started()
+        migrate()
+        grant_privileges()
+        return
     if args.stop:
         r = pg_ctl("stop")
         return say(r.stdout.strip() or r.stderr.strip())

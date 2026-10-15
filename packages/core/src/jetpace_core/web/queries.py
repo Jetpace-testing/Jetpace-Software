@@ -5,8 +5,18 @@ SQL lives here rather than scattered through request handlers, for three
 reasons: it can be read as a set and reviewed as a set, it can be run by
 hand in psql when something looks wrong, and the handlers stay about HTTP.
 
-All of it reads. The dashboard has no write path at all, which is why the
-app role's append-only grant on `reading` costs it nothing.
+All of it reads, still - but no longer because it has to. The app role has
+held `SELECT, INSERT, UPDATE, DELETE` on every table except `reading`
+since the database was first provisioned (setup_postgres.py), so the
+absence of a write path here has always been a choice about what was
+built rather than a privilege the application lacks. A note in the
+add-device modal claimed otherwise and was wrong.
+
+The first writes arrive with the commissioning form: a device row, its
+parameters, its limits and an audit row. They live in `writes.py`, in a
+separate file and behind a single transaction, because a statement that
+changes the configuration of a validated instrument should be impossible
+to confuse at a glance with one that reads a number.
 """
 
 from __future__ import annotations
@@ -604,11 +614,16 @@ def export_devices(conn: psycopg.Connection) -> list[dict]:
 # database very much can.
 #
 # The min and max come back with it because the cards show the range the
-# day actually covered. That is an OBSERVED range, not a specification -
-# there are no limits anywhere in this schema - so the card says "last
-# 24 h" and never "in spec". The design's cards say "Range 18-24 °C",
-# which is a specification it was given with its sample data; claiming
-# one here would be inventing the number that matters most.
+# day actually covered. That is an OBSERVED range, not a specification, so
+# the card says "last 24 h" and never "in spec". The design's cards say
+# "Range 18-24 °C", which is a specification it was given with its sample
+# data; claiming one here would be inventing the number that matters most.
+#
+# A set point for the parameter is now a thing that CAN exist - 0005 adds
+# device_limit and the commissioning form collects LSP and HSP - but it is
+# a separate query (`device_limits` below) and a separate claim. A card
+# showing both is showing two different kinds of fact, and has to label
+# them differently or it is worse than showing one.
 # ---------------------------------------------------------------------------
 
 DEVICE_SHAPE = """
@@ -644,3 +659,76 @@ def device_shape(conn: psycopg.Connection, code: str) -> dict[str, dict]:
         s["lo"] = lo if s["lo"] is None else min(s["lo"], lo)
         s["hi"] = hi if s["hi"] is None else max(s["hi"], hi)
     return shaped
+
+
+# ---------------------------------------------------------------------------
+# limits
+#
+# `device_limit` is append-only (migrations/0005): changing a set point
+# inserts a row and the one in force is the most recent by set_at. Every
+# read of it is therefore a "latest per group" query, which is DISTINCT ON
+# in PostgreSQL - the index device_limit_current is (device_id, param,
+# set_at DESC) precisely so this is a walk of one entry per group rather
+# than a sort of the whole history.
+#
+# Why not a `current` flag, or a `superseded_at` the writer stamps: both
+# need UPDATE on the table, and the grant deliberately does not have it.
+# The ordering IS the state, which means there is no way to get the two
+# out of step.
+# ---------------------------------------------------------------------------
+
+LIMITS = """
+SELECT DISTINCT ON (l.device_id, l.param)
+       d.code                AS device,
+       p.key                 AS param,
+       l.low,
+       l.high,
+       l.set_at,
+       l.set_by,
+       l.reason
+FROM   device_limit l
+JOIN   device d    ON d.id = l.device_id
+JOIN   parameter p ON p.id = l.param
+WHERE  d.retired_at IS NULL
+ORDER  BY l.device_id, l.param, l.set_at DESC
+"""
+
+DEVICE_LIMITS = """
+SELECT DISTINCT ON (l.param)
+       p.key     AS param,
+       l.low,
+       l.high,
+       l.set_at,
+       l.set_by,
+       l.reason
+FROM   device_limit l
+JOIN   device d    ON d.id = l.device_id AND d.code = %(code)s
+JOIN   parameter p ON p.id = l.param
+ORDER  BY l.param, l.set_at DESC
+"""
+
+
+def limits(conn: psycopg.Connection) -> dict[tuple[str, str], dict]:
+    """
+    Every limit in force, keyed by (device code, parameter key).
+
+    A dict rather than a list because every caller is asking "does this
+    device-and-parameter have a limit", once per row it is already
+    rendering, and a list would make that a scan per row.
+    """
+    with conn.cursor() as cur:
+        cur.execute(LIMITS)
+        return {(r["device"], r["param"]): r for r in cur.fetchall()}
+
+
+def device_limits(conn: psycopg.Connection, code: str) -> dict[str, dict]:
+    """
+    One device's limits in force, keyed by parameter key.
+
+    Retired devices included, unlike `limits()`: this is reached from a
+    device's own page, and a retired device's page should still say what
+    it was held to.
+    """
+    with conn.cursor() as cur:
+        cur.execute(DEVICE_LIMITS, {"code": code})
+        return {r["param"]: r for r in cur.fetchall()}

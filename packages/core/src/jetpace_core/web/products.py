@@ -34,7 +34,6 @@ dashboard that comes up healthy with its product pages quietly missing.
 from __future__ import annotations
 
 import importlib
-import tomllib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,16 +43,18 @@ from fastapi import APIRouter
 from fastapi.templating import Jinja2Templates
 
 from .. import devices as devices_
-from .. import paths
+from .. import selection
 
-# Used only when configuration does not say. These are strings, not
-# imports: core still names no product at module scope, and a slug here
-# that has no package is simply skipped by `load_default()`.
-#
-# Order is the order they appear in the navigation.
-KNOWN: tuple[str, ...] = ("environment", "energy")
-
-CONFIG_NAME = "products.toml"
+# Re-exported from jetpace_core.selection, which is where they moved when
+# the poller needed the same answer: it has to know which register maps
+# exist to know which devices in the database it can read, and asking this
+# module would have meant loading FastAPI and Jinja to find out where
+# DP_PV lives. They are re-exported rather than referenced through the
+# other module so that this file stays the one place a reader looks for
+# the product seam.
+KNOWN = selection.KNOWN
+CONFIG_NAME = selection.CONFIG_NAME
+enabled = selection.enabled
 
 
 @dataclass(frozen=True)
@@ -326,56 +327,6 @@ def device_types(
                     f"whichever product happened to load first.")
             collected[device_type.code] = (product.slug, device_type)
     return collected
-
-
-def enabled(config_dir: Path | None = None) -> tuple[str, ...] | None:
-    """
-    Which products this install serves, from config/products.toml.
-
-    Deliberately NOT read through cli.load_config(): that one returns the
-    gateway list and exits when the file describes no gateways, which has
-    nothing to do with whether the dashboard should show a tariff page.
-
-    Deliberately NOT read from version.json either, tempting as it is -
-    version.json is in update.layout.REPLACEABLE, so every OTA update
-    overwrites it and an install's product selection would silently reset
-    to whatever the release shipped. config/ is never touched by an
-    update, which is exactly the property needed.
-
-    Returns None - not a default list - when the install says nothing, so
-    that "nobody configured this" and "somebody chose these" are different
-    answers rather than one answer that has to be recognised by identity.
-    A file that exists and is wrong is an error: somebody tried to say
-    something.
-    """
-    path = (config_dir or paths.config_dir()) / CONFIG_NAME
-    try:
-        text = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return None
-    except OSError as exc:
-        raise SystemExit(f"{path} cannot be read: {exc}") from None
-
-    try:
-        cfg = tomllib.loads(text)
-    except tomllib.TOMLDecodeError as exc:
-        raise SystemExit(f"{path} is not valid TOML: {exc}") from None
-
-    if "enabled" not in cfg:
-        return None
-
-    names = cfg["enabled"]
-    if not isinstance(names, list) or not all(
-            isinstance(n, str) for n in names):
-        raise SystemExit(
-            f"{path}: `enabled` must be a list of product names, "
-            f"for example enabled = [\"environment\"].")
-    unknown = [n for n in names if not n.isascii() or not n.isalpha()]
-    if unknown:
-        raise SystemExit(
-            f"{path}: {unknown} are not product names. Known products are "
-            f"{list(KNOWN)}.")
-    return tuple(names)
 
 
 def load_default() -> list[Product]:

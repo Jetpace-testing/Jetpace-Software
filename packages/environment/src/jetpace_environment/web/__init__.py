@@ -18,12 +18,10 @@ from pathlib import Path
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from jetpace_core.devices import DeviceType, Point
 from jetpace_core.web import queries as core_queries
 from jetpace_core.web.products import Event, Product, Shell, Tile
 
-from .. import queries
-from ..registers import IDP100
+from .. import DEVICE_TYPES, queries
 
 HERE = Path(__file__).resolve().parent
 
@@ -149,44 +147,6 @@ def events(conn) -> list[Event]:
             detail=f"{minutes} min at or below zero" if minutes else "",
         ))
     return found
-
-
-# ---------------------------------------------------------------------------
-# what this product can commission
-#
-# The register map is in ../registers.py, pinned to the datasheet. What
-# this adds is the product's decisions about it: that DP_PV is stored as
-# the parameter `dp` in Pa with no decimals, that the unit selector is
-# worth storing too, and that an operator's low and high set points apply
-# to `dp` rather than to the selector.
-#
-# `dp_unit` is read and stored deliberately, even though nothing plots it.
-# It says whether the instrument is reporting mmWC or Pa, and a transmitter
-# whose unit register was changed on site - by a previous integrator, or by
-# somebody with the vendor's configuration tool - would otherwise report
-# numbers 9.8 times too small with nothing anywhere to say why. Storing it
-# makes that answerable from the database instead of from a site visit.
-#
-# Scale stays 1.0 on both. Debt #6 is that DP_PV's scaling is unconfirmed
-# against a real instrument, and a plausible factor invented here is how
-# that becomes permanent and reaches a batch record. It is one number in
-# one place when the cleanroom is on the bench.
-# ---------------------------------------------------------------------------
-
-DEVICE_TYPES = (
-    DeviceType(
-        model=IDP100,
-        kind="pressure",
-        label="Differential pressure transmitter",
-        points=(
-            Point("dp", "dp_pv", "Differential pressure", "Pa",
-                  aggregation="instantaneous", decimals=0),
-            Point("dp_unit", "unit", "Pressure unit selector", "",
-                  aggregation="instantaneous", decimals=0),
-        ),
-        limits="dp",
-    ),
-)
 
 
 def product() -> Product:

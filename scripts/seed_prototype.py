@@ -85,18 +85,29 @@ def seed(cfg: dict, conn: psycopg.Connection) -> None:
 
     devices = 0
     for g in cfg.get("gateway", []):
+        # scan_interval_ms and offline_backoff_cycles arrive with
+        # migration 0006. They were in the file and nowhere else, so
+        # without carrying them across, a gateway seeded from a sheet
+        # saying interval_s = 2.0 would take the column default of 1000 ms
+        # and quietly double the read rate of every bus on the site.
         cur.execute(
             """INSERT INTO gateway (tenant_id, site_id, label, host, port,
-                                    timeout_ms, gap_ms)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                    timeout_ms, gap_ms, scan_interval_ms,
+                                    offline_backoff_cycles)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                ON CONFLICT (tenant_id, host, port)
                  DO UPDATE SET label = EXCLUDED.label,
                                timeout_ms = EXCLUDED.timeout_ms,
-                               gap_ms = EXCLUDED.gap_ms
+                               gap_ms = EXCLUDED.gap_ms,
+                               scan_interval_ms = EXCLUDED.scan_interval_ms,
+                               offline_backoff_cycles =
+                                   EXCLUDED.offline_backoff_cycles
                RETURNING id""",
             (tenant_id, site_id, g["label"], g["host"], int(g.get("port", 502)),
              int(float(g.get("timeout_s", 2.0)) * 1000),
-             int(float(g.get("gap_s", 0.025)) * 1000)))
+             int(float(g.get("gap_s", 0.025)) * 1000),
+             int(float(g.get("interval_s", 1.0)) * 1000),
+             int(g.get("offline_backoff_cycles", 5))))
         gateway_id = cur.fetchone()[0]
 
         for d in g.get("device", []):

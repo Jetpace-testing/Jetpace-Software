@@ -49,6 +49,9 @@ class ConsoleSink:
         mark = "up  " if online else "DOWN"
         print(f"  ---- {mark} {device_code}  {detail}")
 
+    def refresh(self) -> None:
+        """Nothing cached: this sink resolves nothing and stores nothing."""
+
 
 class PostgresSink:
     """
@@ -117,6 +120,27 @@ class PostgresSink:
         # is only logged.
         log.info("device %s %s %s", device_code,
                  "online" if online else "OFFLINE", detail)
+
+    def refresh(self) -> None:
+        """
+        Re-resolve device codes and parameter keys.
+
+        Called by the poller after the device list changes, and this is
+        the sink the method exists for. The cache below is loaded once at
+        construction; a device commissioned from the dashboard while this
+        process is running is absent from it, so `write` would count
+        every one of its readings as `skipped` - a device read perfectly
+        off the bus, stored nowhere, with nothing in the logs but a
+        rising number.
+
+        Under the write lock, because the two queries go down the same
+        connection `write` is using and a psycopg connection is not safe
+        for concurrent use. Replacing the dicts wholesale rather than
+        updating them in place, so a reader between the two statements
+        sees one complete mapping or the other.
+        """
+        with self._lock:
+            self._load_lookups()
 
     def close(self) -> None:
         self._conn.close()
@@ -243,6 +267,14 @@ class MqttSink:
             self.site.status(device_code),
             self._encode_status(online, detail),
             qos=self._qos, retain=True)
+
+    def refresh(self) -> None:
+        """
+        Nothing cached. This sink publishes a device CODE on a topic and
+        never resolves it to anything, which is why the ingest process on
+        the other end is where a newly commissioned device has to be
+        recognised.
+        """
 
     def close(self) -> None:
         """Say goodbye properly, so the will is not what the broker sends."""

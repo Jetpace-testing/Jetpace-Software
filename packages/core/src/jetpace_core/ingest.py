@@ -33,6 +33,23 @@ BATCH_SIZE = 500
 FLUSH_SECONDS = 2.0
 QUEUE_MAX = 50_000
 
+# How long to wait before asking the sink to re-resolve device codes after
+# a reading arrives for one it does not recognise.
+#
+# PostgresSink resolves codes to ids once, at construction. The poller
+# calls `refresh()` when it reloads its device list, because it knows when
+# that happened; this process has no idea - a device commissioned from the
+# dashboard is just a code it has never seen on a topic it is already
+# subscribed to. So it reacts to the evidence instead: readings being
+# skipped is exactly the symptom, and the symptom is also the signal.
+#
+# Rate limited because the other reason for an unknown code is a device
+# that is genuinely not in this database - a second site publishing to a
+# shared broker, a typo in a topic - and that one never resolves. Without
+# the floor, a steady trickle of those would re-run two queries per batch
+# forever.
+UNKNOWN_RECHECK_SECONDS = 30.0
+
 
 class Ingest:
     def __init__(self, site: Site, sink: PostgresSink) -> None:
@@ -43,6 +60,11 @@ class Ingest:
         self.received = 0
         self.rejected = 0
         self.status_changes = 0
+        # How many times an unknown device code made this process
+        # re-resolve its lookups. Steadily rising means something is
+        # publishing codes this database does not have; one or two means a
+        # device was commissioned.
+        self.refreshes = 0
 
     # --- broker callbacks (these run on paho's network thread) ---------
 
@@ -101,6 +123,8 @@ class Ingest:
     def drain(self) -> None:
         batch: list[Reading] = []
         last = time.monotonic()
+        skipped_seen = self.sink.skipped
+        last_refresh = time.monotonic()
         while not self.stopping.is_set() or not self.queue.empty():
             try:
                 batch.append(self.queue.get(timeout=0.25))
@@ -112,5 +136,15 @@ class Ingest:
                 self.sink.write(batch)
                 batch.clear()
                 last = time.monotonic()
+
+                # Something arrived for a device this process cannot
+                # resolve. Most likely it was commissioned from the
+                # dashboard a moment ago and the cache below predates it.
+                if (self.sink.skipped > skipped_seen
+                        and last - last_refresh >= UNKNOWN_RECHECK_SECONDS):
+                    self.sink.refresh()
+                    self.refreshes += 1
+                    last_refresh = last
+                skipped_seen = self.sink.skipped
         if batch:
             self.sink.write(batch)

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Protocol
@@ -56,6 +57,24 @@ class Sink(Protocol):
 
     def device_state(self, device_code: str, online: bool, detail: str = "") -> None:
         """Called when a device starts or stops answering."""
+        ...
+
+    def refresh(self) -> None:
+        """
+        Called after the device list changes. Forget anything cached
+        about which devices exist.
+
+        Only one implementation needs it, and it is the one that would
+        otherwise fail in a way nobody would find: PostgresSink resolves
+        device codes to numeric ids ONCE, at construction, and drops a
+        reading whose code it cannot resolve. Before this method existed
+        a device commissioned while the poller was running would be read
+        from the bus perfectly and have every one of its readings
+        counted as `skipped` - forever, and with a healthy-looking
+        poller and a device that shows offline on the dashboard.
+
+        A no-op for the sinks that cache nothing, which is most of them.
+        """
         ...
 
 
@@ -163,11 +182,56 @@ class GatewayWorker:
         self._stopping.set()
 
     def join(self, timeout: float | None = None) -> None:
-        self._thread.join(timeout)
+        """
+        Wait for the thread, if there is a thread to wait for.
+
+        `Thread.join` RAISES on a thread that was never started rather
+        than returning, so a worker built and then removed before the
+        poller started would turn a device-list reload into a
+        RuntimeError inside the supervision loop - and `Poller.stop` has
+        the same shape, so a process that failed between construction and
+        `start` would raise on the way out and hide whatever it failed
+        on.
+
+        `ident` is None until a thread starts and stays set after it
+        finishes, which is exactly the question being asked.
+        """
+        if self._thread.ident is not None:
+            self._thread.join(timeout)
 
     @property
     def alive(self) -> bool:
         return self._thread.is_alive()
+
+    def retarget(self, spec: GatewaySpec) -> None:
+        """
+        Point this worker at a new version of its gateway, while it runs.
+
+        ONE ASSIGNMENT, and that is the whole concurrency argument. A pass
+        already in flight is iterating the tuple it started with and
+        finishes against that; the next pass reads the new one. There is
+        no moment at which the device list is half old and half new,
+        because a frozen dataclass cannot be edited - only replaced.
+
+        Mutating `spec.devices` in place would have needed a lock around
+        every read of it in the hot loop, to protect a change that
+        happens once a month.
+
+        The thread keeps its original name even if the gateway's label
+        changed. A thread name in a stack trace that no longer matches
+        the label in the UI is a small confusion; renaming a running
+        thread to fix it is not worth the surprise.
+        """
+        before = {d.code for d in self.spec.devices}
+        self.spec = spec
+        # A device that has left this gateway must not leave its state
+        # behind: a stale backoff count would skip the first few passes
+        # of a device that comes back, and a stale online flag would mean
+        # its return is never reported because nothing appears to have
+        # changed.
+        for code in before - {d.code for d in spec.devices}:
+            self._backoff.pop(code, None)
+            self._online.pop(code, None)
 
     def _loop(self) -> None:
         client = None
@@ -262,11 +326,15 @@ class GatewayWorker:
 # ---------------------------------------------------------------------------
 
 class Poller:
-    def __init__(self, gateways: list[GatewaySpec], sink: Sink,
+    def __init__(self, gateways: Sequence[GatewaySpec], sink: Sink,
                  client_factory) -> None:
+        self.sink = sink
+        self.client_factory = client_factory
+        self._started = False
         self.workers = [GatewayWorker(g, sink, client_factory) for g in gateways]
 
     def start(self) -> None:
+        self._started = True
         for w in self.workers:
             w.start()
 
@@ -275,6 +343,79 @@ class Poller:
             w.stop()
         for w in self.workers:
             w.join(timeout=5.0)
+
+    # --- changing the device list without stopping ------------------------
+
+    @staticmethod
+    def _identity(spec: GatewaySpec) -> tuple[str, int]:
+        """
+        What makes two gateway descriptions the same gateway.
+
+        Host and port, which is what `UNIQUE (tenant_id, host, port)` in
+        migrations/0001 says and what the physical converter actually is.
+        NOT the label: renaming "sim-01" to "Block A" must not tear down
+        the connection to the bus and re-walk thirty devices from cold.
+        """
+        return (spec.host, spec.port)
+
+    def apply(self, gateways: Sequence[GatewaySpec]) -> dict[str, list[str]]:
+        """
+        Make the running workers match this list. Returns what changed.
+
+        Three outcomes per gateway, and the middle one is the point:
+
+          STARTED   a converter that was not there before. A new worker,
+                    started if the poller is already running.
+          RETARGETED the same converter with a different device list, or
+                    different timings. The worker keeps its thread and
+                    its open socket; only its spec is replaced.
+          STOPPED   a gateway that has been disabled or deleted. Told to
+                    stop and joined, so its socket is closed before this
+                    returns.
+
+        Unchanged gateways are not touched at all, which is what makes a
+        reload that changes nothing - the overwhelmingly common case -
+        free.
+
+        Called from one thread only: the poller's own supervision loop.
+        Two concurrent callers could both decide to start the same
+        gateway, and nothing here would notice.
+        """
+        incoming = {self._identity(g): g for g in gateways}
+        running = {self._identity(w.spec): w for w in self.workers}
+        changed: dict[str, list[str]] = {"started": [], "retargeted": [],
+                                         "stopped": []}
+
+        for key, worker in running.items():
+            if key not in incoming:
+                worker.stop()
+                worker.join(timeout=5.0)
+                changed["stopped"].append(worker.spec.label)
+
+        kept = []
+        for key, worker in running.items():
+            if key not in incoming:
+                continue
+            spec = incoming[key]
+            if spec != worker.spec:
+                worker.retarget(spec)
+                changed["retargeted"].append(spec.label)
+            kept.append(worker)
+
+        for key, spec in incoming.items():
+            if key in running:
+                continue
+            worker = GatewayWorker(spec, self.sink, self.client_factory)
+            kept.append(worker)
+            changed["started"].append(spec.label)
+            if self._started:
+                worker.start()
+
+        # In the incoming order, so `stats` and any log line read the same
+        # way as the device list the operator is looking at.
+        order = {self._identity(g): i for i, g in enumerate(gateways)}
+        self.workers = sorted(kept, key=lambda w: order[self._identity(w.spec)])
+        return changed
 
     @property
     def stats(self) -> dict[str, dict[str, int]]:

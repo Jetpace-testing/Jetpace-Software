@@ -26,12 +26,14 @@ import time
 import tomllib
 from pathlib import Path
 
-from . import paths
+from . import inventory, paths, selection
 from .ingest import Ingest
 from .modbus_client import tcp_client_factory
 from .mqtt import Site
 from .poller import DeviceSpec, GatewaySpec, PointSpec, Poller
 from .sinks import ConsoleSink, MqttSink, PostgresSink
+
+log = logging.getLogger(__name__)
 
 
 # --- configuration --------------------------------------------------------
@@ -90,9 +92,47 @@ def load_config(path: Path) -> list[GatewaySpec]:
 
 # --- poller ---------------------------------------------------------------
 
+def open_inventory(args: argparse.Namespace) -> inventory.DatabaseInventory:
+    """
+    The database as the device list, with the register maps the configured
+    products bring.
+
+    config/products.toml decides which maps exist, which decides which
+    devices are readable - so an install serving only `environment` that
+    has an energy meter in its device table says so on startup rather
+    than appearing to poll it.
+
+    Read through `selection` and not `web.products`, which imports
+    FastAPI: the poller has no business loading a web framework to find
+    out where DP_PV lives.
+    """
+    slugs = selection.enabled() or selection.KNOWN
+    return inventory.DatabaseInventory(
+        dsn=paths.postgres_dsn(),
+        types=inventory.load_device_types(slugs))
+
+
 def cmd_poller(args: argparse.Namespace) -> int:
     logging.basicConfig(level=logging.INFO, format="  %(message)s")
-    gateways = load_config(args.config or paths.config_dir() / "prototype.toml")
+
+    source = None
+    if args.devices == "db":
+        source = open_inventory(args)
+        plan = source.read()
+        gateways = list(plan.gateways)
+        for complaint in plan.unreadable:
+            log.warning("not polling %s", complaint)
+        # Zero gateways is a legitimate fresh install, unlike the file
+        # path, which exits. The point of the commissioning form is that
+        # a site starts empty and fills up from the dashboard; a poller
+        # that refused to start until somebody had edited a file would
+        # defeat it. It waits, and picks up the first device on reload.
+        if not gateways:
+            print("\npoller: nothing commissioned yet; watching the device "
+                  "table", flush=True)
+    else:
+        gateways = load_config(
+            args.config or paths.config_dir() / "prototype.toml")
 
     # The whole point of the Sink Protocol: three implementations, one
     # construction site, and nothing below this line knows the difference.
@@ -110,20 +150,56 @@ def cmd_poller(args: argparse.Namespace) -> int:
     devices = sum(len(g.devices) for g in gateways)
     points = sum(len(d.points) for g in gateways for d in g.devices)
     print(f"\npoller: {len(gateways)} gateway(s), {devices} device(s), "
-          f"{points} point(s) -> {args.sink}", flush=True)
+          f"{points} point(s) -> {args.sink}  [{args.devices}]", flush=True)
 
     stopping = _stop_on_signal()
     started = time.monotonic()
+    last_reload = time.monotonic()
+    known = tuple(gateways)
+    reloads = 0
     poller.start()
     try:
         while not stopping.is_set():
             if args.seconds and time.monotonic() - started >= args.seconds:
                 break
             stopping.wait(0.2)
+
+            if source is None or time.monotonic() - last_reload < args.reload:
+                continue
+            last_reload = time.monotonic()
+            try:
+                fresh = source.read()
+            except Exception as exc:                      # noqa: BLE001
+                # Losing the database must not stop a bus being read. The
+                # device list changes once a month; the readings are every
+                # two seconds and the sink buffers them.
+                log.warning("could not re-read the device list: %s", exc)
+                continue
+
+            if fresh.gateways == known:
+                continue
+            reloads += 1
+            changed = poller.apply(fresh.gateways)
+            known = fresh.gateways
+            for what, labels in changed.items():
+                if labels:
+                    print(f"  {what:<11} {', '.join(labels)}", flush=True)
+            for complaint in fresh.unreadable:
+                log.warning("not polling %s", complaint)
+            # Before this line a device commissioned while the poller ran
+            # was read off the bus perfectly and had every reading counted
+            # as `skipped`, because PostgresSink resolves codes to ids
+            # once. Nothing in the logs would have said so.
+            sink.refresh()
+            print(f"  device list {fresh.summary()}", flush=True)
     finally:
+        if source is not None:
+            source.close()
         print("\nstopping", flush=True)
         poller.stop()
         print(f"  stats    {poller.stats}", flush=True)
+        if source is not None:
+            print(f"  reloads  {reloads}", flush=True)
         if isinstance(sink, ConsoleSink):
             print(f"  readings {sink.count}", flush=True)
         elif isinstance(sink, MqttSink):
@@ -319,6 +395,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("poller", help="read the instruments")
     p.add_argument("--config", type=Path)
+    p.add_argument("--devices", choices=("file", "db"), default="file",
+                   help="where the device list comes from. 'file' is "
+                        "config/prototype.toml, read once at startup. 'db' "
+                        "is the device and gateway tables, re-read every "
+                        "--reload seconds, which is what lets a device "
+                        "commissioned from the dashboard start being polled "
+                        "without restarting this process (debt #3)")
+    p.add_argument("--reload", type=float, default=10.0,
+                   metavar="SECONDS",
+                   help="how often to re-read the device list with "
+                        "--devices db (default 10)")
     p.add_argument("--sink", choices=("console", "postgres", "mqtt"),
                    default="console")
     p.add_argument("--quiet", action="store_true")

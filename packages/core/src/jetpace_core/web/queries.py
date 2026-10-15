@@ -96,8 +96,14 @@ SELECT
 # ---------------------------------------------------------------------------
 
 LIVE = f"""
-SELECT DISTINCT ON (d.id, p.key)
-       d.code,
+-- No DISTINCT ON any more. It existed to take the newest of a device's
+-- readings for each parameter; the LATERAL below does that with LIMIT 1,
+-- and device_parameter is unique on (device_id, param), so there is
+-- nothing left to de-duplicate. Leaving it would also be a syntax error:
+-- PostgreSQL requires the DISTINCT ON expressions to lead the ORDER BY,
+-- and this now orders by code so the table arrives in the order a person
+-- reads it rather than in insertion order.
+SELECT d.code,
        d.name,
        g.label                                   AS gateway,
        d.unit_id,
@@ -109,21 +115,52 @@ SELECT DISTINCT ON (d.id, p.key)
        p.unit,
        p.decimals,
        p.aggregation,
-       r.value,
-       r.ts,
-       r.ts > now() - {OFFLINE_AFTER}            AS online,
+       l.value,
+       l.ts,
+       l.ts > now() - {OFFLINE_AFTER}            AS online,
        -- GREATEST(0, ...) because TWO clocks are involved: the poller
        -- timestamps the reading in Python, now() is the database's
        -- transaction start, and a fraction of a second of skew between
        -- them renders as "-1 s". Harmless here; across a WAN to an edge
        -- agent it would not be, which is why §14 insists on NTP.
-       GREATEST(0, EXTRACT(EPOCH FROM (now() - r.ts)))::int AS age_s
+       GREATEST(0, EXTRACT(EPOCH FROM (now() - l.ts)))::int AS age_s
 FROM   device d
-JOIN   gateway g      ON g.id = d.gateway_id
-JOIN   reading r      ON r.device_id = d.id
-JOIN   parameter p    ON p.id = r.param
+JOIN   gateway g           ON g.id = d.gateway_id
+-- DRIVEN BY CONFIGURATION, not by readings.
+--
+-- This was an inner join on `reading`, which meant a device that had
+-- never reported was ABSENT from the overview's table - not offline,
+-- not blank, gone. An operator commissions an instrument, it does not
+-- answer because the bus is not wired yet, and the device they just
+-- created is nowhere on the screen with nothing to say why. That is the
+-- same failure the poller takes care to avoid with `Plan.unreadable`,
+-- and the commissioning form promised the opposite in writing: "it is
+-- in the device table, offline, with no readings".
+--
+-- DEVICES and FACILITY were already written this way, with a LEFT JOIN
+-- LATERAL; this query was the only one left asserting that a device
+-- exists if and only if it has spoken.
+--
+-- Taking the parameter list from device_parameter rather than from the
+-- readings also says something more useful: these are the values the
+-- device is CONFIGURED to report, so one that has stopped sending a
+-- parameter shows it blank instead of silently narrowing the table.
+--
+-- It is cheaper too. DISTINCT ON over the hypertable sorted every
+-- reading a device had ever produced to take the first row; the lateral
+-- is one index seek per (device, parameter) on reading_pk, which is
+-- (device_id, param, ts DESC).
+LEFT   JOIN device_parameter dp ON dp.device_id = d.id AND dp.enabled
+LEFT   JOIN parameter p         ON p.id = dp.param
+LEFT   JOIN LATERAL (
+         SELECT r.value, r.ts
+         FROM   reading r
+         WHERE  r.device_id = d.id AND r.param = p.id
+         ORDER  BY r.ts DESC
+         LIMIT  1
+       ) l ON true
 WHERE  d.retired_at IS NULL
-ORDER  BY d.id, p.key, r.ts DESC
+ORDER  BY d.code, p.key
 """
 
 

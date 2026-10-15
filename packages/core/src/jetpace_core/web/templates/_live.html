@@ -90,7 +90,13 @@
             <span class="location-cell">{{ ico.icon('location', 14) }}{{ d.gateway }}</span>
           </td>
           <td>
-            {% if first %}
+            {# `first` exists as soon as the device is CONFIGURED to read a
+                 parameter; its value is null until the device has actually
+                 sent one. Those are different states and the table shows
+                 both: a dash for "nothing yet", a number for a reading.
+                 Formatting a null here crashed the whole overview the
+                 first time a commissioned device had not answered. #}
+            {% if first and first.value is not none %}
               {{ '{:,.{}f}'.format(first.value, first.decimals) }}
               <span class="dim">{{ first.unit }}</span>
               {% if d.points | length > 1 %}
@@ -123,9 +129,24 @@
         </tr>
       {% else %}
         <tr><td colspan="6">
+          {# "Start the simulator and the poller" stood here until a real
+             install was emptied and a customer screen told them to start
+             a simulator. The two states it was running together are
+             worth separating: nothing commissioned is a dashboard
+             waiting for its first instrument, while devices that exist
+             and have never reported is a bus or a poller problem. #}
           <div class="empty-state">
-            <strong>No readings yet</strong>
-            <span>Start the simulator and the poller.</span>
+            {% if summary and summary.devices %}
+              <strong>No readings yet</strong>
+              <span>{{ summary.devices }} device{{ '' if summary.devices == 1
+                    else 's' }} commissioned, none reporting. Check the
+                    converter and that the poller is running.</span>
+            {% else %}
+              <strong>No devices yet</strong>
+              <span>Add one with the button above: its converter address,
+                    slave ID and type. It is read over Modbus before it is
+                    saved.</span>
+            {% endif %}
           </div>
         </td></tr>
       {% endfor %}

@@ -50,6 +50,31 @@ QUEUE_MAX = 50_000
 # forever.
 UNKNOWN_RECHECK_SECONDS = 30.0
 
+# How often to re-resolve the lookups even when nothing looks wrong.
+#
+# The reactive refresh above only fires on an UNKNOWN code, which misses
+# the case that actually bit: a device code whose numeric id CHANGED. The
+# cache resolves it happily, to a row that is no longer there, and
+# `reading` has no foreign key on device_id - 0001 explains why, it is a
+# hypertable - so the database accepts every one of those writes. The
+# readings are then invisible everywhere, because every query joins
+# `device`, and nothing counts them as skipped because nothing was
+# skipped.
+#
+# Observed here: a superuser purge of the prototype data, then the same
+# device codes commissioned again from the form. 174 readings landed
+# against a device id that had been deleted twenty minutes earlier, with
+# a healthy poller, a healthy ingest and a dashboard showing the device
+# as offline.
+#
+# A periodic refresh does not prevent that window, it bounds it. Five
+# minutes of orphans after a configuration change that should not happen
+# on a running site, against two small queries every five minutes
+# forever. The real fix is that an id should never be reused, which is
+# why the commissioning form refuses a retired code - but a superuser
+# with psql is outside anything the application can enforce.
+LOOKUP_MAX_AGE_SECONDS = 300.0
+
 
 class Ingest:
     def __init__(self, site: Site, sink: PostgresSink) -> None:
@@ -137,11 +162,16 @@ class Ingest:
                 batch.clear()
                 last = time.monotonic()
 
-                # Something arrived for a device this process cannot
-                # resolve. Most likely it was commissioned from the
-                # dashboard a moment ago and the cache below predates it.
-                if (self.sink.skipped > skipped_seen
-                        and last - last_refresh >= UNKNOWN_RECHECK_SECONDS):
+                # Two reasons to re-resolve, and they catch different
+                # faults. ON EVIDENCE: something arrived for a device
+                # this process cannot resolve, most likely commissioned
+                # from the dashboard a moment ago. ON AGE: nothing looks
+                # wrong, which is exactly how a code whose id changed
+                # behaves - it resolves, to a row that is gone.
+                unknown = (self.sink.skipped > skipped_seen
+                           and last - last_refresh >= UNKNOWN_RECHECK_SECONDS)
+                stale = last - last_refresh >= LOOKUP_MAX_AGE_SECONDS
+                if unknown or stale:
                     self.sink.refresh()
                     self.refreshes += 1
                     last_refresh = last

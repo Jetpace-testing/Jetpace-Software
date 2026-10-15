@@ -65,7 +65,8 @@
               ico.icon('trend' if p.aggregation == 'counter' else 'gauge', 16) }}</span>
             <b>{{ p.label }}</b>
           </div>
-          <strong>{{ '{:,.{}f}'.format(p.value, p.decimals) }}
+          <strong>{% if p.value is none %}&mdash;{% else %}{{
+            '{:,.{}f}'.format(p.value, p.decimals) }}{% endif %}
                   <small>{{ p.unit }}</small></strong>
           {# The day's hourly averages, from the rollup. Marked
              presentational: it has no axes and no labels, so it cannot

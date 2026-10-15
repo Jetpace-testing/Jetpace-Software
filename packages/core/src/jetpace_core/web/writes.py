@@ -150,8 +150,8 @@ def set_limit(conn: psycopg.Connection, *, device_code: str, param: str,
 
     Returns the new row's id and timestamp. Does not commit.
     """
-    low = _as_number(low, "low set point")
-    high = _as_number(high, "high set point")
+    low = _as_number(low, "low set point", "low")
+    high = _as_number(high, "high set point", "high")
 
     if low is None and high is None:
         raise WriteRejected(
@@ -204,7 +204,7 @@ def set_limit(conn: psycopg.Connection, *, device_code: str, param: str,
 
 # ---------------------------------------------------------------------------
 
-def _as_number(value: Any, what: str) -> float | None:
+def _as_number(value: Any, what: str, field: str = "") -> float | None:
     """
     An empty field means "no limit on this side"; anything unparseable is
     a rejection naming the field.
@@ -225,7 +225,8 @@ def _as_number(value: Any, what: str) -> float | None:
     try:
         return float(value)
     except (TypeError, ValueError):
-        raise WriteRejected(f"{what.capitalize()} must be a number.") from None
+        raise WriteRejected(f"{what.capitalize()} must be a number.",
+                            field) from None
 
 
 def _float_or_none(value: Any) -> float | None:
@@ -434,6 +435,21 @@ def commission_device(
     host = (host or "").strip()
     gateway_label = (gateway_label or "").strip()
     reason = (reason or "").strip()
+
+    # NORMALISE THE SET POINTS BEFORE THE "did they give any" TEST.
+    #
+    # An HTML form posts "" for a field nobody filled in, and "" is not
+    # None - so the test below for whether to create a limit at all saw
+    # two empty strings, decided a limit was wanted, and `set_limit`
+    # refused it as having neither side. The whole commission failed,
+    # with a message about set points, for a device whose operator had
+    # deliberately not given any.
+    #
+    # Converting here rather than inside the test also means a
+    # mistyped figure is reported against ITS OWN field rather than as
+    # "low", which is what set_limit would have said for either.
+    low = _as_number(low, "low set point", "low")
+    high = _as_number(high, "high set point", "high")
 
     if not devices_.CODE.fullmatch(code):
         raise WriteRejected(

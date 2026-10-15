@@ -272,6 +272,7 @@
     var needle = (search ? search.value : "").trim().toLowerCase();
     var want = state ? state.value : "";
     var matched = [];
+    var total = 0;
 
     // ONE PASS, and the page decides what to do with the result. The
     // filter says which rows match; a paginator, if the page has one,
@@ -283,16 +284,26 @@
       var ok = (!needle || haystack.indexOf(needle) !== -1) &&
                (!want || row.dataset.state === want);
       row.hidden = !ok;
+      total += 1;
       if (ok) { matched.push(row); }
     });
 
     if (window.__paginate) { window.__paginate(matched); }
 
-    // Say when a filter has hidden everything. A table that simply ends
+    // Say when a FILTER has hidden everything. A table that simply ends
     // looks like a system with no devices, which is a different and much
     // more alarming thing than a search that matched nothing.
+    //
+    // `total` is why this is not just `matched.length`. On an install
+    // with nothing commissioned there are no rows to hide, and the
+    // message read "No device matches - clear the search or the status
+    // filter" over an empty search box: it blamed the operator's filter
+    // for a table that was empty on its own, and it sat directly beneath
+    // the template's own "nothing commissioned" state, so the panel gave
+    // two different explanations at once. Seen the moment the prototype
+    // data was purged.
     var empty = document.getElementById("filtered-empty");
-    if (empty) { empty.hidden = matched.length !== 0; }
+    if (empty) { empty.hidden = total === 0 || matched.length !== 0; }
   }
 
   // Exported so the paginator can ask for a re-run after a page change

@@ -27,6 +27,7 @@ answers from a dict.
 """
 
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -356,3 +357,81 @@ def test_ingest_does_not_re_resolve_when_nothing_is_being_skipped(monkeypatch):
     ingest.stopping.set()
     ingest.drain()
     assert ingest.refreshes == 0 and sink.refreshes == 0
+
+
+# --- the orphan class of fault --------------------------------------------
+
+def test_refresh_reports_a_device_id_that_changed_underneath_it():
+    """
+    FOUND LIVE, after a superuser purge and the same codes commissioned
+    again.
+
+    The reactive refresh only fires on an UNKNOWN code. A code whose
+    numeric id CHANGED resolves perfectly well - to a row that is gone -
+    so nothing was skipped, nothing was refreshed, and 174 readings went
+    into the historian against a deleted device id. `reading` has no
+    foreign key on device_id (0001: it is a hypertable), so the database
+    accepted every one, and every query joins `device`, so none of them
+    appears anywhere.
+
+    One warning is the only notice anybody gets, so it has to happen.
+    """
+    sink = postgres_sink_without_a_database({"DP-001": 1, "DP-002": 2},
+                                            {"dp": 1})
+
+    class Cur:
+        def __init__(self):
+            # DP-001 came back with a new id; DP-002 is unchanged.
+            self.answers = [[("DP-001", 9), ("DP-002", 2)], [("dp", 1)]]
+
+        def execute(self, sql, params=None):
+            pass
+
+        def fetchall(self):
+            return self.answers.pop(0)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    class Conn:
+        def cursor(self):
+            return Cur()
+
+    sink._conn = Conn()
+    moved = sink.refresh()
+    assert moved == {"DP-001": (1, 9)}
+    assert "DP-002" not in moved, "an unchanged id is not news"
+
+
+def test_ingest_re_resolves_on_age_as_well_as_on_evidence():
+    """
+    The two triggers catch different faults. On evidence: an unknown
+    code, which is a device commissioned a moment ago. On age: nothing
+    looks wrong at all, which is exactly how a changed id behaves.
+
+    Without the second, a cache poisoned by a purge stays poisoned until
+    the process restarts.
+    """
+    source = Path(ingest_module.__file__).read_text(encoding="utf-8")
+    assert "LOOKUP_MAX_AGE_SECONDS" in source
+    assert ingest_module.LOOKUP_MAX_AGE_SECONDS <= 600, (
+        "a longer window than ten minutes is a long time to write "
+        "readings nobody will ever see")
+
+
+def test_ingest_refreshes_on_age_with_nothing_being_skipped(monkeypatch):
+    monkeypatch.setattr(ingest_module, "BATCH_SIZE", 1)
+    monkeypatch.setattr(ingest_module, "UNKNOWN_RECHECK_SECONDS", 1e9)
+    monkeypatch.setattr(ingest_module, "LOOKUP_MAX_AGE_SECONDS", 0.0)
+
+    sink = QuietSink()
+    sink.skipped = 0
+    ingest = Ingest(Site(tenant="t", site="s"), sink)
+    ingest.queue.put(Reading(ts=None, device_code="DP-001", param="dp",
+                             value=1.0))
+    ingest.stopping.set()
+    ingest.drain()
+    assert ingest.refreshes == 1, "nothing was skipped; age alone must do it"

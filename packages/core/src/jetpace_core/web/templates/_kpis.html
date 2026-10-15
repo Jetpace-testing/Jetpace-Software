@@ -40,8 +40,15 @@
   <div class="kpi-copy">
     <span>Offline Devices</span>
     <strong>{{ offline }}</strong>
+    {# Three states, not two. A fresh install has no devices, and
+       "0 offline - all reporting" is a reassurance about a fleet that
+       does not exist: it is the same words a healthy site shows, on a
+       site with nothing in it. Seen on the real dashboard the moment the
+       prototype data was purged. #}
     <small{{ ' class="danger-text"' | safe if offline }}>
-      {{ 'not reporting' if offline else 'all reporting' }}</small>
+      {% if offline %}not reporting
+      {%- elif summary.devices %}all reporting
+      {%- else %}none commissioned{% endif %}</small>
   </div>
 </article>
 

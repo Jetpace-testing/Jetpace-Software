@@ -388,10 +388,15 @@ ready(function () {
       row.hidden = i < from || i >= to;
     });
 
+    // Three states again. "No devices to show" is right for a filter
+    // that matched nothing and wrong for an install that has nothing:
+    // the second is not a thing being hidden from you, it is the honest
+    // state of a dashboard waiting for its first instrument.
+    var present = document.querySelectorAll("tr[data-device]").length;
     count.textContent = matched.length
       ? "Showing " + (from + 1) + "–" + to + " of " + matched.length
         + " device" + (matched.length === 1 ? "" : "s")
-      : "No devices to show";
+      : (present ? "No devices to show" : "");
 
     // The buttons exist only when there is somewhere to go. The design
     // draws three because its sample data has 248 devices; drawing three

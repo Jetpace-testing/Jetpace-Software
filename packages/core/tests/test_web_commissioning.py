@@ -475,3 +475,88 @@ def test_the_registration_script_can_change_the_child_list_alone():
         encoding="utf-8")
     assert '"--config-only"' in script
     assert "Restart-Service" in script
+
+
+# --- the empty install ----------------------------------------------------
+#
+# Nothing had ever rendered this application against a database with no
+# devices in it. Purging the prototype's synthetic data produced four
+# faults in one screen, every one of them cosmetic-looking and every one
+# of them a thing a customer would read on their first day.
+
+def test_an_install_with_nothing_commissioned_renders(client):
+    """
+    The state every site is in for its first hour. A 500 here is the
+    first thing a customer sees.
+    """
+    assert client.get("/").status_code == 200
+
+
+def test_zero_offline_devices_does_not_claim_everything_is_reporting(client):
+    """
+    "0 offline - all reporting" is the same words a healthy fleet shows,
+    on a site that has no fleet. Three states, not two.
+    """
+    body = client.get("/").text
+    offline = body.split("Offline Devices", 1)[1][:400]
+    assert "all reporting" not in offline
+    assert "none commissioned" in offline
+
+
+def test_an_empty_table_does_not_blame_the_operators_filter(client):
+    """
+    The filter's "No device matches - clear the search or the status
+    filter" was revealed whenever nothing matched, including when there
+    was nothing to match. It appeared over an empty search box, directly
+    beneath the template's own empty state, so the panel gave two
+    different explanations at once.
+    """
+    base = (HERE / "templates" / "_base.html").read_text(encoding="utf-8")
+    assert "total === 0 || matched.length !== 0" in base
+
+
+def test_the_empty_table_does_not_tell_a_customer_to_start_a_simulator(
+        client):
+    """
+    It said "Start the simulator and the poller." - developer copy that
+    reached a customer screen the moment a real install was emptied.
+    """
+    markup = (HERE / "templates" / "_live.html").read_text(encoding="utf-8")
+    body = markup.split("{#", 1)[0] + "".join(
+        part.split("#}", 1)[-1] for part in markup.split("{#")[1:])
+    assert "simulator" not in body.lower()
+
+
+def test_a_commissioned_device_appears_before_it_has_ever_reported(client):
+    """
+    THE ONE THAT MATTERED. `LIVE` was an inner join on `reading`, so a
+    device that had never answered was not offline, not blank - absent.
+    An operator commissions an instrument, the bus is not wired yet, and
+    the device they just created is nowhere on the screen with nothing
+    to say why. The commissioning confirmation promises the opposite in
+    writing.
+    """
+    from jetpace_core.web import queries as q
+    live = " ".join(q.LIVE.split())
+    assert "LEFT JOIN device_parameter" in live.replace("LEFT   JOIN",
+                                                        "LEFT JOIN")
+    assert "LEFT JOIN LATERAL" in live.replace("LEFT   JOIN", "LEFT JOIN")
+    # the inner join that caused it
+    assert "JOIN   reading" not in q.LIVE
+
+
+def test_the_table_survives_a_device_with_no_reading_yet(client, monkeypatch):
+    """
+    And the other half: the query returning a null value must not crash
+    the template that formats it. It did.
+    """
+    from jetpace_core.web import queries as q
+    monkeypatch.setattr(q, "live", lambda conn: [{
+        "code": "DP-009", "name": "Gowning", "gateway": "Bench",
+        "unit_id": 9, "param": "dp", "param_label": "Differential pressure",
+        "unit": "Pa", "decimals": 0, "aggregation": "instantaneous",
+        "value": None, "ts": None, "online": None, "age_s": None,
+    }])
+    body = client.get("/").text
+    assert "DP-009" in body
+    assert "Offline" in body

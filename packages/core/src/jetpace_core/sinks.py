@@ -121,7 +121,7 @@ class PostgresSink:
         log.info("device %s %s %s", device_code,
                  "online" if online else "OFFLINE", detail)
 
-    def refresh(self) -> None:
+    def refresh(self) -> dict[str, tuple[int, int]]:
         """
         Re-resolve device codes and parameter keys.
 
@@ -140,7 +140,28 @@ class PostgresSink:
         sees one complete mapping or the other.
         """
         with self._lock:
+            before = dict(self._device_ids)
             self._load_lookups()
+
+        # A code whose ID CHANGED is not a routine cache update. It means
+        # the device row was deleted and recreated - which the
+        # application cannot do, because a retired code is refused, so it
+        # means somebody used a superuser connection. Every reading
+        # written since that happened went to the old id, and `reading`
+        # has no foreign key to stop it (0001: it is a hypertable), so
+        # they are sitting in the historian attached to nothing.
+        #
+        # WARNING and not INFO. This is the only notice anybody gets.
+        moved = {code: (old, self._device_ids[code])
+                 for code, old in before.items()
+                 if code in self._device_ids and self._device_ids[code] != old}
+        if moved:
+            log.warning(
+                "device id changed under us: %s. Readings written since the "
+                "change are orphaned - they reference a device row that no "
+                "longer exists and will not appear anywhere.",
+                ", ".join(f"{c} {o}->{n}" for c, (o, n) in moved.items()))
+        return moved
 
     def close(self) -> None:
         self._conn.close()

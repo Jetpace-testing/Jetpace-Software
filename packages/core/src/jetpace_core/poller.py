@@ -74,6 +74,10 @@ class Sink(Protocol):
         poller and a device that shows offline on the dashboard.
 
         A no-op for the sinks that cache nothing, which is most of them.
+
+        Returns whatever moved, so a caller can say so: a code whose
+        numeric id CHANGED means the device row was deleted and
+        recreated, and every reading written since went to the old one.
         """
         ...
 

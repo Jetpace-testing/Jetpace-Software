@@ -1227,3 +1227,99 @@ footer.foot { display: flex; gap: 18px; justify-content: space-between;
   .panel-heading { flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+/* ===========================================================================
+ * Signing in.
+ *
+ * A page of its own, not the shell: the navigation, the device panels and
+ * the live poll mean nothing to somebody who is not signed in, and
+ * rendering them would show the shape of the installation to anybody who
+ * can reach the port.
+ *
+ * Deliberately plain. Everything else in this stylesheet is a dashboard
+ * wearing a design; this is a form somebody types a password into at the
+ * start of a shift, and the only job is that the field is obvious and the
+ * error is readable.
+ * ======================================================================== */
+
+.auth-body {
+  min-height: 100vh; margin: 0; display: grid; place-items: center;
+  background: var(--plane); padding: 24px;
+}
+.auth {
+  width: min(420px, 100%); background: var(--surface);
+  border: 1px solid var(--hairline); border-radius: var(--radius);
+  box-shadow: 0 20px 60px rgba(18, 48, 71, .12); padding: 30px 30px 24px;
+}
+.auth-brand { margin-bottom: 22px; }
+/* NO `display` HERE. `.brand-logo` is display:none by default and the
+ * theme rules turn exactly one of the pair on; `.auth-brand img` is
+ * (0,1,1) and beats that base rule's (0,1,0), so setting display:block
+ * here showed BOTH logos stacked. Seen on the real login page. */
+.auth-brand img { height: auto; max-width: 182px; }
+.auth h1 {
+  margin: 0 0 6px; font-size: var(--t-20); color: var(--navy);
+  letter-spacing: -.02em;
+}
+.auth-lede {
+  margin: 0 0 20px; font-size: var(--t-10); color: var(--ink-2);
+  line-height: 1.55;
+}
+.auth-form { display: grid; gap: 14px; }
+.auth-form .field > span { font-size: var(--t-10); }
+.auth-form input {
+  height: 38px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); color: var(--ink); padding: 0 11px;
+  font-size: var(--t-11); width: 100%;
+}
+.auth-form input:focus-visible {
+  outline: 2px solid rgba(8, 126, 164, .35); outline-offset: 1px;
+  border-color: var(--chrome);
+}
+.auth-submit {
+  height: 40px; width: 100%; justify-content: center; margin-top: 4px;
+  font-size: var(--t-11);
+}
+.auth-error, .auth-notice {
+  margin: 0 0 18px; padding: 10px 12px; border-radius: var(--radius-sm);
+  font-size: var(--t-10); line-height: 1.5;
+}
+.auth-error {
+  background: rgba(229, 72, 77, .07); border: 1px solid rgba(229, 72, 77, .3);
+  color: var(--ink);
+}
+.auth-notice {
+  background: rgba(22, 163, 106, .08);
+  border: 1px solid rgba(22, 163, 106, .3); color: var(--ink);
+}
+.auth-foot {
+  margin: 20px 0 0; padding-top: 16px; border-top: 1px solid var(--border);
+  font-size: var(--t-9); color: var(--muted); line-height: 1.5;
+}
+.auth-foot a { color: var(--chrome); }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .auth-error {
+    background: rgba(240, 101, 106, .10);
+    border-color: rgba(240, 101, 106, .34);
+  }
+  :root:not([data-theme="light"]) .auth-notice {
+    background: rgba(47, 182, 125, .10);
+    border-color: rgba(47, 182, 125, .34);
+  }
+}
+:root[data-theme="dark"] .auth-error {
+  background: rgba(240, 101, 106, .10); border-color: rgba(240, 101, 106, .34);
+}
+:root[data-theme="dark"] .auth-notice {
+  background: rgba(47, 182, 125, .10); border-color: rgba(47, 182, 125, .34);
+}
+
+/* The signed-in person in the header, which until now was the words
+ * "Operator / Signed out" drawn by the design and true of nobody. */
+.who { display: flex; align-items: center; gap: 9px; }
+.who-out {
+  border: 0; background: none; padding: 4px; cursor: pointer;
+  color: var(--muted); display: inline-flex; border-radius: 6px;
+}
+.who-out:hover { color: var(--critical); background: var(--canvas); }

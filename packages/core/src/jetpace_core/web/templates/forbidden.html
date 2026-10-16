@@ -1,0 +1,17 @@
+{% extends "_base.html" %}
+{% block title %}Not allowed &mdash; Jetpace{% endblock %}
+{% block nav %}{% endblock %}
+{% block content %}
+<section class="panel empty-panel">
+  <div class="empty-state">
+    <strong>Your role does not allow this</strong>
+    <span>{{ message }}</span>
+    {% if principal %}
+      <span class="dim">
+        Signed in as {{ principal.username }} &middot; {{ principal.label }}.
+      </span>
+    {% endif %}
+    <p><a class="primary-button" href="/">Back to the dashboard</a></p>
+  </div>
+</section>
+{% endblock %}

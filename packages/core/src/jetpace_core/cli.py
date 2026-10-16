@@ -432,6 +432,12 @@ def build_parser() -> argparse.ArgumentParser:
                             "product views at all")
     p.set_defaults(func=cmd_web)
 
+    # The way back in when nobody can sign in. Its own module - see
+    # usercli.py, which also explains why a password is never an
+    # argument.
+    from . import usercli
+    usercli.attach(sub)
+
     p = sub.add_parser("where", help="print the resolved paths")
     p.set_defaults(func=cmd_where)
 

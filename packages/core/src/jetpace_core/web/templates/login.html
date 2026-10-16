@@ -1,0 +1,127 @@
+{# Sign in, and the first-run case.
+
+   NOT an extension of _base.html. The shell carries the navigation, the
+   device panels and the live poll, none of which mean anything to
+   somebody who is not signed in - and rendering it would leak the shape
+   of the installation to anybody who can reach the port.
+
+   THREE STATES, one frame:
+
+     first run    no account exists yet, so this page CREATES the
+                  administrator instead of asking for one. There is no
+                  shipped default password anywhere in this product -
+                  Meril RTD ships `admin / Meril-LifeScience` in its
+                  source, and a known credential left enabled is the
+                  most common finding there is.
+     sign in      the ordinary case.
+     locked out   too many attempts; says how long, and nothing else.
+
+   The error message is the same sentence whatever was wrong. "No such
+   user" and "wrong password" told apart is a list of valid usernames. #}
+
+<!doctype html>
+<html lang="en" data-theme="{{ theme or '' }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% if first_run %}Set up{% else %}Sign in{% endif %} &mdash; Jetpace</title>
+<link rel="stylesheet" href="{{ asset('/static/app.css') }}">
+</head>
+<body class="auth-body">
+  <main class="auth">
+    <div class="auth-brand">
+      <img class="brand-logo on-light" width="182" height="62"
+           src="{{ asset('/static/brand/jetpace-on-light.svg') }}"
+           alt="Jetpace Test &amp; Measurement Inc.">
+      <img class="brand-logo on-dark" width="182" height="62"
+           src="{{ asset('/static/brand/jetpace-on-dark.svg') }}"
+           alt="" aria-hidden="true">
+    </div>
+
+    {% if first_run %}
+      <h1>Create the administrator</h1>
+      <p class="auth-lede">
+        No account exists on this installation yet, so this one will be
+        the first. It can create every other account, and it is the only
+        account that can.
+      </p>
+    {% else %}
+      <h1>Sign in</h1>
+      <p class="auth-lede">{{ site_label or 'This installation' }}</p>
+    {% endif %}
+
+    {% if error %}
+      <p class="auth-error" role="alert">{{ error }}</p>
+    {% endif %}
+    {% if notice %}
+      <p class="auth-notice" role="status">{{ notice }}</p>
+    {% endif %}
+
+    <form method="post"
+          action="{{ '/first-run' if first_run else '/login' }}"
+          class="auth-form" autocomplete="on">
+      {# Where to go after signing in. Only ever a path on this site -
+         app.py refuses anything with a scheme or a host, because a
+         redirect target taken from a query string is how a login page
+         becomes somebody else's phishing page. #}
+      <input type="hidden" name="next" value="{{ next_url or '' }}">
+
+      {% if first_run %}
+        <label class="field">
+          <span>Full name</span>
+          <input name="full_name" type="text" required autofocus
+                 autocomplete="name" placeholder="Rishi Shah">
+          <small>Shown beside every change this account makes.</small>
+        </label>
+      {% endif %}
+
+      <label class="field">
+        <span>Username</span>
+        <input name="username" type="text" required
+               {% if not first_run %}autofocus{% endif %}
+               autocomplete="username" autocapitalize="none"
+               spellcheck="false" pattern="[a-z0-9][a-z0-9._-]{1,30}"
+               value="{{ username or '' }}">
+        {% if first_run %}
+          <small>Lowercase letters, digits, dot, dash or underscore.</small>
+        {% endif %}
+      </label>
+
+      <label class="field">
+        <span>Password</span>
+        <input name="password" type="password" required
+               autocomplete="{{ 'new-password' if first_run else 'current-password' }}">
+        {% if first_run %}
+          <small>
+            At least {{ min_length }} characters. Length is what makes a
+            password hard to guess &mdash; four ordinary words beat a
+            short one with symbols in it. It cannot be your own name.
+          </small>
+        {% endif %}
+      </label>
+
+      {% if first_run %}
+        <label class="field">
+          <span>Password again</span>
+          <input name="confirm" type="password" required
+                 autocomplete="new-password">
+        </label>
+      {% endif %}
+
+      <button type="submit" class="primary-button auth-submit">
+        {% if first_run %}Create and sign in{% else %}Sign in{% endif %}
+      </button>
+    </form>
+
+    <p class="auth-foot">
+      {% if first_run %}
+        Nothing on this installation is reachable until this account
+        exists.
+      {% else %}
+        Signed-in sessions end after {{ idle_minutes }} minutes of
+        inactivity.
+      {% endif %}
+    </p>
+  </main>
+</body>
+</html>

@@ -26,7 +26,9 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from .. import permissions
 from ..poller import PointSpec
+from . import auth_routes
 from . import products as products_
 from . import queries, writes
 
@@ -346,6 +348,49 @@ def create_app(dsn: str,
 
     templates.env.globals["asset"] = asset
 
+    # --- who is asking -----------------------------------------------
+    #
+    # Installed BEFORE the routes below, and as a middleware rather than
+    # a dependency: a dependency is opt-in, so a route that forgets one
+    # is open and looks exactly like a route that did not. This is
+    # opt-out - everything is checked and the few public paths are named
+    # in one list. See web/auth_routes.py.
+    auth_routes.install(app, dsn, templates)
+    auth_routes.install_users(app, dsn, templates)
+
+    # Every template can ask who is signed in, so the shell can show a
+    # name and hide what a role cannot reach. HIDING IS NOT ENFORCING:
+    # the server refuses regardless, and the page only avoids offering a
+    # button that would be refused.
+    def signed_in(request):
+        return auth_routes.principal_of(request)
+
+    def may(request, permission):
+        person = auth_routes.principal_of(request)
+        return bool(person and person.can(permission))
+
+    templates.env.globals["signed_in"] = signed_in
+    templates.env.globals["may"] = may
+    templates.env.globals["PERM"] = permissions
+
+    @app.exception_handler(auth_routes.Forbidden)
+    def forbidden(request: Request, exc: auth_routes.Forbidden):
+        """
+        403 as a page for a person, as a short body for a panel.
+
+        It says WHICH roles may do the thing, because "forbidden" alone
+        sends somebody to the administrator without knowing what to ask
+        for.
+        """
+        if auth_routes.wants_html(request):
+            return templates.TemplateResponse(
+                request, "forbidden.html",
+                {"message": exc.message,
+                 "principal": auth_routes.principal_of(request)},
+                status_code=403)
+        return HTMLResponse(f"<p class=\"panel-note\">{exc.message}</p>",
+                            status_code=403)
+
     def product_tiles(conn) -> list[dict]:
         """
         Each loaded product's own figures for the overview.
@@ -593,6 +638,7 @@ def create_app(dsn: str,
         each of them has bought one product and is being shown another.
         Those moved to /environment and /energy.
         """
+        auth_routes.require(request, permissions.VIEW)
         with queries.connect(dsn) as conn:
             rows = rows_for_live(conn)
             zones, counts = facility(conn)
@@ -740,6 +786,7 @@ def create_app(dsn: str,
         The form has no field for a register address. This is what makes
         that visible rather than merely true.
         """
+        auth_routes.require(request, permissions.DEVICE_ADD)
         try:
             device_type = selected_type(model)
         except writes.WriteRejected as exc:
@@ -762,6 +809,7 @@ def create_app(dsn: str,
         build time (CLAUDE.md), and the register that sets a slave
         address is in NEVER_WRITE because writing it costs a site visit.
         """
+        auth_routes.require(request, permissions.DEVICE_ADD)
         from ..modbus_client import probe as modbus_probe
 
         try:
@@ -841,6 +889,7 @@ def create_app(dsn: str,
         be something this process observed, at the moment it wrote the
         row, rather than something it was told.
         """
+        auth_routes.require(request, permissions.DEVICE_ADD)
         from ..modbus_client import probe as modbus_probe
 
         try:
@@ -861,7 +910,13 @@ def create_app(dsn: str,
                     gateway_label=gateway_label,
                     answered=found.answered,
                     detail=probe_detail(found, device_type),
-                    reason=reason)
+                    reason=reason,
+                    # NO LONGER NULL. Every device commissioned from here
+                    # now carries the name of whoever did it, into the
+                    # audit row and into the set point's `set_by` - which
+                    # is the whole reason the user model existed to be
+                    # built. architecture.md debt #20 closes here.
+                    actor=auth_routes.principal_of(request).username)
                 limits = queries.device_limits(conn, device["code"])
                 next_code = writes.suggest_code(
                     conn, queries.tenant_id(conn), device_type.code_prefix)
@@ -897,6 +952,7 @@ def create_app(dsn: str,
         there is a chart between them that must not be replaced. One
         request rather than four - see _live_push.html.
         """
+        auth_routes.require(request, permissions.VIEW)
         with queries.connect(dsn) as conn:
             zones, counts = facility(conn)
             tiles = product_tiles(conn)
@@ -923,6 +979,7 @@ def create_app(dsn: str,
         than a 404, because this is a fragment inside a page that is
         otherwise fine.
         """
+        auth_routes.require(request, permissions.VIEW)
         with queries.connect(dsn) as conn:
             if not code:
                 code = initial_device(rows_for_live(conn))
@@ -939,6 +996,7 @@ def create_app(dsn: str,
         than every 5 - because the suspect-sample query is the only scan
         on this page. See the note on queries.SUSPECT.
         """
+        auth_routes.require(request, permissions.VIEW)
         with queries.connect(dsn) as conn:
             return templates.TemplateResponse(request, "_exceptions.html", {
                 "events": exceptions(conn),
@@ -976,7 +1034,7 @@ def create_app(dsn: str,
         return ",".join(out) + "\r\n"
 
     @app.get("/export/readings.csv")
-    def export_readings(hours: float = 24.0):
+    def export_readings(request: Request, hours: float = 24.0):
         """
         Readings for a window, streamed.
 
@@ -987,6 +1045,7 @@ def create_app(dsn: str,
         comment - a truncated export that looks complete is worse than
         one that refuses.
         """
+        auth_routes.require(request, permissions.EXPORT)
         window = max(MIN_HOURS, min(float(hours), EXPORT_MAX_HOURS))
 
         def rows():
@@ -1022,8 +1081,9 @@ def create_app(dsn: str,
                      f'attachment; filename="readings-{window:g}h.csv"'})
 
     @app.get("/export/devices.csv")
-    def export_devices():
+    def export_devices(request: Request):
         """The commissioned fleet. Small enough to build in one pass."""
+        auth_routes.require(request, permissions.EXPORT)
         with queries.connect(dsn) as conn:
             rows = queries.export_devices(conn)
 
@@ -1047,6 +1107,7 @@ def create_app(dsn: str,
 
     @app.get("/devices", response_class=HTMLResponse)
     def devices_page(request: Request):
+        auth_routes.require(request, permissions.VIEW)
         with queries.connect(dsn) as conn:
             return templates.TemplateResponse(request, "devices.html", {
                 "devices": queries.devices(conn),
@@ -1054,6 +1115,7 @@ def create_app(dsn: str,
 
     @app.get("/partials/devices", response_class=HTMLResponse)
     def partial_devices(request: Request):
+        auth_routes.require(request, permissions.VIEW)
         with queries.connect(dsn) as conn:
             return templates.TemplateResponse(request, "_devices.html", {
                 "devices": queries.devices(conn),
@@ -1061,6 +1123,7 @@ def create_app(dsn: str,
 
     @app.get("/devices/{code}", response_class=HTMLResponse)
     def device_page(request: Request, code: str):
+        auth_routes.require(request, permissions.VIEW)
         with queries.connect(dsn) as conn:
             found = queries.device(conn, code)
             if found is None:
@@ -1083,6 +1146,7 @@ def create_app(dsn: str,
 
     @app.get("/partials/device-points/{code}", response_class=HTMLResponse)
     def partial_device_points(request: Request, code: str):
+        auth_routes.require(request, permissions.VIEW)
         with queries.connect(dsn) as conn:
             return templates.TemplateResponse(request, "_device_points.html", {
                 "points": queries.device_points(conn, code),
@@ -1096,7 +1160,8 @@ def create_app(dsn: str,
             })
 
     @app.get("/api/trend")
-    def api_trend(device: str, param: str, hours: float = 24.0):
+    def api_trend(request: Request, device: str, param: str,
+                  hours: float = 24.0):
         """
         One device, one parameter, any window.
 
@@ -1109,6 +1174,7 @@ def create_app(dsn: str,
         samples]. Thirty days is a few hundred rows, and five keys repeated
         a few hundred times is most of the response body.
         """
+        auth_routes.require(request, permissions.VIEW)
         hours = max(MIN_HOURS, min(float(hours), MAX_HOURS))
         with queries.connect(dsn) as conn:
             rows, width, source = queries.trend(conn, device, param, hours)

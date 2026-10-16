@@ -1,0 +1,91 @@
+{# Create an account.
+
+   THE ADMINISTRATOR CHOOSES THE FIRST PASSWORD AND THE PERSON REPLACES
+   IT. `must_change_password` is set, so the account cannot do anything
+   until its holder has chosen one the administrator does not know. The
+   alternative is an administrator who can sign in as somebody else, and
+   an audit log that says that person did it.
+
+   The password is typed here and shown nowhere afterwards - not on this
+   page, not in the audit row, not in a log line. Telling the person is
+   the administrator's job, in whatever way they would tell them
+   anything else. #}
+
+{% import "_icons.html" as ico %}
+
+<div class="modal-backdrop" id="modal-add-user" hidden
+     role="dialog" aria-modal="true" aria-labelledby="add-user-title">
+  <div class="modal modal-wide">
+    <div class="modal-head">
+      <div>
+        <span class="eyebrow">User management</span>
+        <h2 id="add-user-title">Add a person</h2>
+      </div>
+      <button class="icon-button" type="button" data-modal-close
+              aria-label="Close">{{ ico.icon('x') }}</button>
+    </div>
+
+    <form method="post" action="/users" class="device-form">
+      <fieldset>
+        <legend>Who they are</legend>
+        <div class="field-row">
+          <label class="field field-grow">
+            <span>Full name</span>
+            <input name="full_name" type="text" required
+                   autocomplete="off" placeholder="Priya Nair">
+            <small>Shown beside every change they make.</small>
+          </label>
+          <label class="field">
+            <span>Username</span>
+            <input name="username" type="text" required
+                   autocomplete="off" autocapitalize="none"
+                   spellcheck="false"
+                   pattern="[a-z0-9][a-z0-9._-]{1,30}"
+                   placeholder="pnair">
+            <small>Permanent. Appears in the audit log.</small>
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>What they may do</legend>
+        <div class="role-grid">
+          {% for role in PERM.ROLES %}
+            <label class="role-choice">
+              <input type="checkbox" name="role" value="{{ role }}"
+                     {{ 'checked' if role == 'viewer' }}>
+              <span>
+                <strong>{{ PERM.ROLE_LABELS[role] }}</strong>
+                <small>{{ PERM.ROLE_NOTES[role] }}</small>
+              </span>
+            </label>
+          {% endfor %}
+        </div>
+        <small class="field-help">
+          More than one is allowed and means the union of both. Giving
+          nobody a role they do not need is the cheapest security
+          control there is.
+        </small>
+      </fieldset>
+
+      <fieldset>
+        <legend>First password</legend>
+        <label class="field">
+          <span>Password</span>
+          <input name="password" type="password" required
+                 autocomplete="new-password">
+          <small>
+            At least {{ min_length }} characters, and not their name.
+            They must replace it the first time they sign in, so you
+            will not know their real one &mdash; which is the point.
+          </small>
+        </label>
+      </fieldset>
+
+      <div class="modal-actions">
+        <button type="button" data-modal-close>Cancel</button>
+        <button type="submit" class="primary-button">Create</button>
+      </div>
+    </form>
+  </div>
+</div>

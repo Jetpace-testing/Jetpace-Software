@@ -1,0 +1,124 @@
+{% extends "_base.html" %}
+{% block title %}Users &mdash; Jetpace{% endblock %}
+{% block nav %}users{% endblock %}
+
+{# Accounts and roles. Administrator only, enforced on the route; this
+   page is never rendered for anybody else.
+
+   WHAT IT DOES NOT OFFER IS DELETION. An account is switched off. An
+   audit row five years old names its actor, and a reader of a batch
+   record has to be able to find out who that was - so the row stays and
+   the database refuses DELETE on it outright.
+
+   NOR DOES IT SHOW A PASSWORD, ever, including one it has just set. An
+   administrator who can read somebody's password can act as them, and
+   the audit log would say it was them. #}
+
+{% block content %}
+<section class="panel">
+  <div class="panel-head">
+    <div>
+      <h2>People</h2>
+      <p class="panel-sub">
+        {{ users | length }} account{{ '' if users | length == 1 else 's' }}
+        on this installation. Every change here is recorded.
+      </p>
+    </div>
+    <button class="primary-button" type="button" data-modal="add-user">
+      {{ ico.icon('plus', 16) }} Add person
+    </button>
+  </div>
+
+  {% if message %}
+    <p class="commission {{ 'commission-bad' if failed else 'commission-good' }}">
+      {{ message }}</p>
+  {% endif %}
+
+  <div class="table-wrap">
+    <table class="data">
+      <thead>
+        <tr>
+          <th>Person</th><th>Roles</th><th>Last sign-in</th>
+          <th>Sessions</th><th>State</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for u in users %}
+        <tr>
+          <td>
+            <strong>{{ u.username }}</strong>
+            <small class="dim">{{ u.full_name }}</small>
+          </td>
+          <td>
+            {% for role in u.roles %}
+              <span class="pill" title="{{ PERM.ROLE_NOTES[role] }}">{{
+                PERM.ROLE_LABELS[role] }}</span>
+            {% else %}
+              <span class="dim">none &mdash; cannot do anything</span>
+            {% endfor %}
+          </td>
+          <td>{% if u.last_login_at %}{{ u.last_login_at.strftime('%d %b %H:%M')
+              }}{% else %}<span class="dim">never</span>{% endif %}</td>
+          <td>{{ u.live_sessions }}</td>
+          <td>
+            {% if u.disabled_at %}
+              <span class="pill critical">disabled</span>
+              {% if u.disabled_reason %}
+                <small class="dim">{{ u.disabled_reason }}</small>{% endif %}
+            {% elif u.locked_until %}
+              <span class="pill warning">locked</span>
+              <small class="dim">too many attempts</small>
+            {% elif u.must_change_password %}
+              <span class="pill warning">must change password</span>
+            {% else %}
+              <span class="pill">active</span>
+            {% endif %}
+          </td>
+          <td class="row-actions">
+            {% if u.username != me.username %}
+              <form method="post" action="/users/{{ u.username }}/state">
+                <input type="hidden" name="disabled"
+                       value="{{ 'false' if u.disabled_at else 'true' }}">
+                <button type="submit">{{ 'Enable' if u.disabled_at
+                                         else 'Disable' }}</button>
+              </form>
+            {% else %}
+              {# You cannot disable yourself. An administrator who locks
+                 their own account on a single-administrator install has
+                 locked the installation, and the only way back is the
+                 command line on the machine. #}
+              <span class="dim">you</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-head"><div><h2>What each role may do</h2>
+    <p class="panel-sub">
+      From the platform specification. The server enforces this; a page
+      only avoids offering a button that would be refused.
+    </p></div></div>
+  <div class="table-wrap">
+    <table class="data">
+      <thead><tr><th>Role</th><th>Means</th><th>Can</th></tr></thead>
+      <tbody>
+      {% for role in PERM.ROLES %}
+        <tr>
+          <td><strong>{{ PERM.ROLE_LABELS[role] }}</strong></td>
+          <td>{{ PERM.ROLE_NOTES[role] }}</td>
+          <td><small class="dim">{{
+            PERM.GRANTS[role] | sort | join(', ') or 'nothing' }}</small></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% include "_add_user.html" %}
+{% endblock %}

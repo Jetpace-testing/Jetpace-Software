@@ -19,6 +19,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from jetpace_core import permissions
+from jetpace_core.web import auth_routes
 from jetpace_core.web import queries as core_queries
 from jetpace_core.web.products import Event, Product, Shell, Tile
 
@@ -32,13 +34,15 @@ def routes(shell: Shell) -> APIRouter:
 
     @router.get("/energy", response_class=HTMLResponse)
     def energy(request: Request):
+        auth_routes.require(request, permissions.VIEW)
         with core_queries.connect(shell.dsn) as conn:
             return shell.templates.TemplateResponse(request, "energy.html", {
                 "energy": queries.energy_period(conn, days=7),
             })
 
     @router.get("/api/energy-daily")
-    def api_energy_daily(days: int = 7):
+    def api_energy_daily(request: Request, days: int = 7):
+        auth_routes.require(request, permissions.VIEW)
         with core_queries.connect(shell.dsn) as conn:
             rows = queries.energy_daily(conn, days=days)
         series: dict[str, dict] = defaultdict(

@@ -84,10 +84,14 @@
      {"label": "Map & Locations",  "icon": "map",      "href": "",         "slug": ""},
      {"label": "Trends & Analysis","icon": "trend",    "href": "",         "slug": ""},
    ] %}
+{# User Management is the only one of these that leads anywhere. It is
+   shown to everybody and refused to everybody else: hiding it would be a
+   link that silently is not there, which reads as a missing feature
+   rather than as a permission. #}
 {% set tail_nav = [
      {"label": "Reports",         "icon": "report",   "href": "", "slug": ""},
      {"label": "Alarms",          "icon": "alarm",    "href": "", "slug": ""},
-     {"label": "User Management", "icon": "users",    "href": "", "slug": ""},
+     {"label": "User Management", "icon": "users",    "href": "/users", "slug": "users"},
      {"label": "Settings",        "icon": "settings", "href": "", "slug": ""},
    ] %}
 
@@ -204,11 +208,21 @@
         <span class="themer-label">Auto</span>
       </button>
 
-      <button class="profile" type="button">
-        <div class="avatar">JP</div>
-        <div><strong>Operator</strong><span>Signed out</span></div>
-        {{ ico.icon('chevron', 14) }}
-      </button>
+      {# Until now this said "Operator / Signed out", which was furniture
+         from the design and true of nobody. It is the signed-in person. #}
+      {% set me = signed_in(request) %}
+      <div class="who">
+        <a class="profile" href="/password"
+           title="Change your password">
+          <div class="avatar">{{ me.initials if me else '??' }}</div>
+          <div>
+            <strong>{{ me.full_name if me else 'Not signed in' }}</strong>
+            <span>{{ me.label if me else '&mdash;' }}</span>
+          </div>
+        </a>
+        <a class="who-out" href="/logout" title="Sign out"
+           aria-label="Sign out">{{ ico.icon('x', 16) }}</a>
+      </div>
     </header>
 
     <div class="content">

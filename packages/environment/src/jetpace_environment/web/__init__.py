@@ -18,6 +18,8 @@ from pathlib import Path
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from jetpace_core import permissions
+from jetpace_core.web import auth_routes
 from jetpace_core.web import queries as core_queries
 from jetpace_core.web.products import Event, Product, Shell, Tile
 
@@ -39,6 +41,7 @@ def routes(shell: Shell) -> APIRouter:
 
     @router.get("/environment", response_class=HTMLResponse)
     def environment(request: Request):
+        auth_routes.require(request, permissions.VIEW)
         with core_queries.connect(shell.dsn) as conn:
             return shell.templates.TemplateResponse(
                 request, "environment.html", {
@@ -47,7 +50,8 @@ def routes(shell: Shell) -> APIRouter:
                 })
 
     @router.get("/api/dp-trend")
-    def api_dp_trend(hours: int = 24):
+    def api_dp_trend(request: Request, hours: int = 24):
+        auth_routes.require(request, permissions.VIEW)
         """
         ECharts wants series, so shape it here rather than in JavaScript.
 

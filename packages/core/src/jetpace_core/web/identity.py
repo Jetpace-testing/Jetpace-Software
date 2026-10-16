@@ -446,10 +446,19 @@ def resolve(conn: psycopg.Connection, token: str | None, *,
         end(conn, token, "account disabled")
         return None
 
+    # The expiry this request leaves behind, not the one it found.
+    #
+    # The row was read before the slide, so `row["expires_at"]` is the
+    # PREVIOUS deadline - up to fifteen minutes in the past by the time a
+    # page renders it. The header tells somebody when they will be signed
+    # out, and a deadline that has already gone gets ignored exactly once
+    # and then distrusted for ever.
+    expires_at = row["expires_at"]
     if slide:
+        expires_at = _expiry()
         with conn.cursor() as cur:
             cur.execute(SLIDE_SESSION, {"token_hash": digest,
-                                        "expires_at": _expiry()})
+                                        "expires_at": expires_at})
 
     return Principal(
         user_id=row["user_id"],
@@ -458,7 +467,7 @@ def resolve(conn: psycopg.Connection, token: str | None, *,
         tenant_id=row["tenant_id"],
         site_roles=_roles_of(conn, row["user_id"]),
         must_change_password=row["must_change_password"],
-        expires_at=row["expires_at"],
+        expires_at=expires_at,
     )
 
 

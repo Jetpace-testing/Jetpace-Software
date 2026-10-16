@@ -208,20 +208,98 @@
         <span class="themer-label">Auto</span>
       </button>
 
-      {# Until now this said "Operator / Signed out", which was furniture
-         from the design and true of nobody. It is the signed-in person. #}
+      {# The account menu.
+
+         The design drew a profile button with a chevron and nothing
+         behind it, over the words "Operator / Signed out" - furniture,
+         true of nobody. It is now the signed-in person and the chevron
+         opens the four things that belong to an account rather than to a
+         screen.
+
+         WHY THE SESSION DEADLINE IS IN HERE. Automatic logoff is
+         fifteen minutes and a background poll deliberately does not
+         postpone it (Annex 11 §12, see auth_routes.counts_as_activity).
+         That is correct and it is also surprising: a dashboard sitting
+         open signs itself out while apparently being watched. Saying
+         when turns a surprise into a fact somebody can plan around - go
+         for a cup of tea, come back, sign in again.
+
+         SIGN OUT IS A FORM AND NOT A LINK. A GET that ends a session can
+         be fired by an <img> on any other page, and the whole cost of
+         avoiding it is one <form>. #}
       {% set me = signed_in(request) %}
       <div class="who">
-        <a class="profile" href="/password"
-           title="Change your password">
+        <button class="profile" type="button" id="account-button"
+                aria-haspopup="menu" aria-expanded="false"
+                aria-controls="account-menu">
           <div class="avatar">{{ me.initials if me else '??' }}</div>
           <div>
             <strong>{{ me.full_name if me else 'Not signed in' }}</strong>
             <span>{{ me.label if me else '&mdash;' }}</span>
           </div>
-        </a>
-        <a class="who-out" href="/logout" title="Sign out"
-           aria-label="Sign out">{{ ico.icon('x', 16) }}</a>
+          {{ ico.icon('chevron', 14) }}
+        </button>
+
+        <div class="account-menu" id="account-menu" role="menu" hidden
+             aria-labelledby="account-button">
+          {% if me %}
+            <div class="account-head">
+              <div class="avatar">{{ me.initials }}</div>
+              <div>
+                <strong>{{ me.full_name }}</strong>
+                <span>{{ me.username }}</span>
+              </div>
+            </div>
+
+            <ul class="account-roles">
+              {% for role in me.roles | sort %}
+                <li title="{{ PERM.ROLE_NOTES[role] }}">{{
+                  PERM.ROLE_LABELS[role] }}</li>
+              {% else %}
+                <li class="none">No role &mdash; can see nothing</li>
+              {% endfor %}
+            </ul>
+
+            {% if me.expires_at %}
+              {# The TIME is written by script, from the ISO stamp, with
+                 toLocaleTimeString - the same call the header clock uses
+                 two divs away. Rendering it server-side printed UTC
+                 against a local-time clock: "signs out at 12:42" beside
+                 "5:57 PM", five and a half hours apart, on the one line
+                 whose whole job is to be trusted.
+
+                 The server's fallback is labelled UTC rather than left
+                 bare, so a browser with no script shows a time that is
+                 awkward instead of a time that is wrong. #}
+              <p class="account-expiry" id="account-expiry"
+                 data-expires="{{ me.expires_at.isoformat() }}">
+                Signs out at
+                <strong class="account-at">{{
+                  me.expires_at.strftime('%H:%M') }} UTC</strong>
+                <span class="account-countdown"></span>
+              </p>
+            {% endif %}
+
+            <div class="account-items">
+              <a role="menuitem" href="/password">
+                {{ ico.icon('shield', 15) }} Change password</a>
+              {% if may(request, PERM.USER_MANAGE) %}
+                <a role="menuitem" href="/users">
+                  {{ ico.icon('users', 15) }} User management</a>
+              {% endif %}
+            </div>
+
+            <form method="post" action="/logout" class="account-out">
+              <button type="submit" role="menuitem">
+                {{ ico.icon('x', 15) }} Sign out</button>
+            </form>
+          {% else %}
+            <div class="account-items">
+              <a role="menuitem" href="/login">
+                {{ ico.icon('shield', 15) }} Sign in</a>
+            </div>
+          {% endif %}
+        </div>
       </div>
     </header>
 
@@ -589,6 +667,103 @@ function ready(fn) {
     fn();
   }
 }
+
+// The account menu.
+//
+// In _base.html rather than on one page, because the header is on every
+// page and a menu that works on the overview and nowhere else is worse
+// than no menu.
+//
+// IT IS NOT A MODAL. The overview's modal traps focus and dims the page,
+// which is right for a form somebody must finish or abandon and wrong
+// for four links. This closes on Escape, on a click anywhere else, and
+// on the first Tab that leaves it - and otherwise stays out of the way.
+(function () {
+  var button = document.getElementById("account-button");
+  var menu = document.getElementById("account-menu");
+  if (!button || !menu) { return; }
+
+  function open() {
+    menu.hidden = false;
+    button.setAttribute("aria-expanded", "true");
+    tick();
+    var first = menu.querySelector("[role=menuitem]");
+    if (first) { first.focus(); }
+  }
+
+  function close(refocus) {
+    if (menu.hidden) { return; }
+    menu.hidden = true;
+    button.setAttribute("aria-expanded", "false");
+    // Only take focus back when the menu itself gave it up - closing
+    // because somebody clicked a link elsewhere must not yank the
+    // cursor backwards.
+    if (refocus) { button.focus(); }
+  }
+
+  button.addEventListener("click", function (ev) {
+    ev.stopPropagation();
+    if (menu.hidden) { open(); } else { close(true); }
+  });
+
+  document.addEventListener("click", function (ev) {
+    if (!menu.hidden && !menu.contains(ev.target)) { close(false); }
+  });
+
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape") { close(true); }
+  });
+
+  menu.addEventListener("focusout", function (ev) {
+    // relatedTarget is where focus went. Null means it left the document
+    // entirely - another window - and closing then would be wrong.
+    if (ev.relatedTarget && !menu.contains(ev.relatedTarget)
+        && ev.relatedTarget !== button) {
+      close(false);
+    }
+  });
+
+  // --- how long is left -------------------------------------------------
+  //
+  // The server renders the deadline; this only turns it into a sentence
+  // and keeps it current. THE CLOCK IS NOT CONSULTED for anything that
+  // matters: the session expires in the database, at a time the database
+  // set, and a browser whose clock is wrong gets a wrong COUNTDOWN and
+  // the correct LOGOUT. Reading the remaining time off the server's
+  // timestamp rather than trusting the browser to agree about "now" is
+  // the only part worth care.
+  var note = document.getElementById("account-expiry");
+  var out = note && note.querySelector(".account-countdown");
+  var deadline = note ? Date.parse(note.dataset.expires) : NaN;
+
+  var at = note && note.querySelector(".account-at");
+
+  function tick() {
+    if (!out || isNaN(deadline)) { return; }
+    if (at) {
+      at.textContent = new Date(deadline).toLocaleTimeString(undefined, {
+        hour: "2-digit", minute: "2-digit"
+      });
+    }
+    var left = Math.round((deadline - Date.now()) / 60000);
+    if (left > 1) {
+      out.textContent = "— about " + left + " minutes from now";
+      note.classList.remove("soon");
+    } else if (left >= 0) {
+      out.textContent = "— in under a minute";
+      note.classList.add("soon");
+    } else {
+      // Past it. The next thing this page does will redirect to the
+      // login, so say that rather than counting upwards into nonsense.
+      out.textContent = "— any moment now";
+      note.classList.add("soon");
+    }
+  }
+
+  // Only while the menu is open. A timer on every page for a line nobody
+  // is reading is a timer that keeps a laptop awake.
+  setInterval(function () { if (!menu.hidden) { tick(); } }, 20000);
+})();
 </script>
 
 {% block scripts %}{% endblock %}

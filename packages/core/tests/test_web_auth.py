@@ -397,3 +397,128 @@ def test_the_gate_refuses_when_the_database_is_unreachable(monkeypatch):
     client = TestClient(create_app(DSN, P.load(["environment"])),
                         raise_server_exceptions=False)
     assert client.get("/").status_code == 503
+
+
+# --- the account menu -----------------------------------------------------
+
+def test_the_header_shows_who_is_signed_in(monkeypatch):
+    client = signed_in_as(monkeypatch, "administrator")
+    body = client.get("/", headers={"accept": "text/html"}).text
+    assert "Rishi Shah" in body
+    assert "rshah" in body
+    assert "Administrator" in body
+
+
+def test_the_menu_offers_user_management_only_to_an_administrator(
+        monkeypatch):
+    """
+    Hiding is not enforcing - /users refuses an engineer either way.
+    This is about not offering a button whose only outcome is a 403.
+    """
+    admin = signed_in_as(monkeypatch, "administrator").get(
+        "/", headers={"accept": "text/html"}).text
+    engineer = signed_in_as(monkeypatch, "engineer").get(
+        "/", headers={"accept": "text/html"}).text
+    assert 'href="/users"' in admin
+    menu = engineer.split('id="account-menu"', 1)[1].split("</div>", 20)[0]
+    assert 'href="/users"' not in menu
+
+
+def test_signing_out_from_the_menu_is_a_post(monkeypatch):
+    """
+    A GET that ends a session can be fired by an <img> on another page.
+    SameSite=lax already blocks that, but a form costs nothing and does
+    not depend on a browser getting lax right.
+    """
+    body = signed_in_as(monkeypatch, "viewer").get(
+        "/", headers={"accept": "text/html"}).text
+    out = body.split('class="account-out"', 1)[1][:200]
+    assert 'method="post"' in body.split('class="account-out"')[0][-120:] \
+        or 'action="/logout"' in out
+
+
+def test_the_menu_says_when_the_session_ends(monkeypatch):
+    """
+    Automatic logoff is fifteen minutes and a poll deliberately does not
+    postpone it, so a dashboard sitting open signs itself out while
+    apparently being watched. Saying when turns a surprise into
+    something somebody can plan around.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    person = identity.Principal(
+        user_id=1, username="rshah", full_name="Rishi Shah", tenant_id=1,
+        site_roles={1: frozenset({"viewer"})},
+        expires_at=datetime(2026, 10, 16, 17, 45, tzinfo=timezone.utc))
+    monkeypatch.setattr(q, "connect", lambda dsn: Conn())
+    monkeypatch.setattr(identity, "count_users", lambda conn: 1)
+    monkeypatch.setattr(identity, "resolve",
+                        lambda conn, t, slide=True: person)
+    client = TestClient(create_app(DSN, P.load(["environment"])),
+                        raise_server_exceptions=False)
+    client.cookies.set(identity.COOKIE, "x")
+    body = client.get("/", headers={"accept": "text/html"}).text
+    assert "Signs out at" in body
+    assert "17:45" in body
+    assert 'data-expires="2026-10-16T17:45:00+00:00"' in body
+
+
+def test_the_deadline_reported_is_the_one_this_request_leaves_behind():
+    """
+    `resolve` reads the row BEFORE sliding the expiry, so reporting
+    row["expires_at"] would show the PREVIOUS deadline - up to fifteen
+    minutes in the past by the time a page renders it. A deadline that
+    has already gone is ignored once and distrusted afterwards.
+    """
+    source = Path(identity.__file__).read_text(encoding="utf-8")
+    body = source.split("def resolve(")[1].split("def end(")[0]
+    assert "expires_at = _expiry()" in body
+    assert "expires_at=expires_at" in body
+    assert 'expires_at=row["expires_at"]' not in body
+
+
+def test_the_menu_is_closed_until_it_is_opened(monkeypatch):
+    body = signed_in_as(monkeypatch, "viewer").get(
+        "/", headers={"accept": "text/html"}).text
+    menu = body.split('id="account-menu"', 1)[1][:120]
+    assert "hidden" in menu
+    assert 'aria-expanded="false"' in body
+
+
+def test_the_menu_can_be_closed_from_the_keyboard():
+    """
+    It is not a modal - no focus trap, no dimmed page - so Escape and
+    tabbing out are the two ways somebody who is not using a mouse
+    leaves it.
+    """
+    base = (HERE / "templates" / "_base.html").read_text(encoding="utf-8")
+    script = base.split("The account menu.", 1)[1]
+    assert 'ev.key === "Escape"' in script
+    assert "focusout" in script
+    assert 'aria-haspopup="menu"' in base
+
+
+def test_the_countdown_timer_only_runs_while_the_menu_is_open():
+    """
+    A timer ticking on every page for a line nobody is looking at keeps
+    a laptop awake for nothing.
+    """
+    base = (HERE / "templates" / "_base.html").read_text(encoding="utf-8")
+    assert "if (!menu.hidden) { tick(); }" in base
+
+
+def test_the_sign_out_time_is_not_rendered_in_utc_beside_a_local_clock():
+    """
+    FOUND BY LOOKING AT IT. The menu said "Signs out at 12:42" while the
+    header clock two divs away said "5:57 PM" - the same instant, five
+    and a half hours apart, on the one line whose entire job is to be
+    believed.
+
+    The clock uses toLocaleTimeString, so the deadline has to as well.
+    The server's fallback is labelled UTC rather than left bare: a
+    browser with no script then shows a time that is awkward instead of
+    a time that is wrong.
+    """
+    base = (HERE / "templates" / "_base.html").read_text(encoding="utf-8")
+    assert "toLocaleTimeString" in base.split("The account menu.", 1)[1]
+    assert "}} UTC</strong>" in base

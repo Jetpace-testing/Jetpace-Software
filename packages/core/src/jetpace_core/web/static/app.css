@@ -1315,11 +1315,76 @@ footer.foot { display: flex; gap: 18px; justify-content: space-between;
   background: rgba(47, 182, 125, .10); border-color: rgba(47, 182, 125, .34);
 }
 
-/* The signed-in person in the header, which until now was the words
- * "Operator / Signed out" drawn by the design and true of nobody. */
-.who { display: flex; align-items: center; gap: 9px; }
-.who-out {
-  border: 0; background: none; padding: 4px; cursor: pointer;
-  color: var(--muted); display: inline-flex; border-radius: 6px;
+/* --- the account menu ----------------------------------------------------
+ *
+ * The header's profile button, which the design drew with a chevron and
+ * nothing behind it. `position: relative` on the wrapper is what the
+ * menu hangs off; it is right-aligned because the button is the last
+ * thing in the header and a left-aligned menu would run off the screen.
+ */
+
+.who { display: flex; align-items: center; position: relative; }
+.profile { cursor: pointer; border-radius: 10px; padding: 4px 6px; }
+.profile:hover { background: var(--canvas); }
+.profile[aria-expanded="true"] { background: var(--canvas); }
+.profile > svg { color: var(--axis); flex: none; transition: transform .12s; }
+.profile[aria-expanded="true"] > svg { transform: rotate(90deg); }
+
+.account-menu {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 60;
+  width: 272px; background: var(--surface);
+  border: 1px solid var(--hairline); border-radius: var(--radius-sm);
+  box-shadow: 0 16px 44px rgba(18, 48, 71, .18); overflow: hidden;
 }
-.who-out:hover { color: var(--critical); background: var(--canvas); }
+.account-menu[hidden] { display: none; }
+
+.account-head {
+  display: flex; align-items: center; gap: 10px; padding: 14px 14px 11px;
+}
+.account-head > div:last-child { display: flex; flex-direction: column;
+                                 min-width: 0; }
+.account-head strong { font-size: var(--t-11); color: var(--ink);
+                       overflow: hidden; text-overflow: ellipsis; }
+.account-head span { font-size: var(--t-9); color: var(--muted);
+                     font-family: ui-monospace, "Cascadia Mono", Consolas,
+                                  monospace; }
+
+.account-roles { list-style: none; margin: 0; padding: 0 14px 12px;
+                 display: flex; flex-wrap: wrap; gap: 5px; }
+.account-roles li {
+  font-size: var(--t-8); font-weight: 600; letter-spacing: .02em;
+  background: var(--chrome-tint); color: var(--chrome);
+  border-radius: var(--radius-pill); padding: 2px 9px;
+}
+.account-roles li.none { background: var(--canvas); color: var(--muted);
+                         font-weight: 500; }
+
+/* The automatic logoff, said out loud. A poll does not postpone it, so a
+ * dashboard sitting open signs itself out while apparently being
+ * watched; this turns that surprise into something to plan around. */
+.account-expiry {
+  margin: 0; padding: 10px 14px; font-size: var(--t-9);
+  color: var(--ink-2); line-height: 1.45;
+  border-top: 1px solid var(--border); background: var(--canvas);
+}
+.account-expiry strong { color: var(--ink); font-variant-numeric: tabular-nums; }
+.account-expiry.soon { color: var(--critical); }
+.account-expiry.soon strong { color: var(--critical); }
+
+.account-items { padding: 6px; border-top: 1px solid var(--border); }
+.account-items a, .account-out button {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 8px 9px; border-radius: 7px; border: 0; background: none;
+  font: inherit; font-size: var(--t-10); color: var(--ink-2);
+  text-decoration: none; cursor: pointer; text-align: left;
+}
+.account-items a:hover, .account-out button:hover { background: var(--canvas);
+                                                    color: var(--ink); }
+.account-items a:focus-visible, .account-out button:focus-visible {
+  outline: 2px solid rgba(8, 126, 164, .35); outline-offset: -2px;
+}
+.account-items svg, .account-out svg { color: var(--axis); flex: none; }
+
+.account-out { padding: 6px; border-top: 1px solid var(--border); margin: 0; }
+.account-out button:hover { color: var(--critical); }
+.account-out button:hover svg { color: var(--critical); }

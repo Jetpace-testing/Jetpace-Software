@@ -302,6 +302,21 @@ def install(app, dsn: str, templates) -> None:
 
     # --- signing out ------------------------------------------------------
 
+    # BOTH VERBS, on purpose.
+    #
+    # The account menu signs out with a POST, which is the right shape
+    # for something that changes state and is immune to being fired by
+    # an <img> on another page. The GET stays because "Sign out instead"
+    # on the forced password-change screen is a link, and because
+    # somebody typing /logout into the address bar should be signed out
+    # rather than shown a 405.
+    #
+    # The cross-site risk the GET would otherwise carry is already
+    # closed by SameSite=lax: a subresource request to this path does not
+    # carry the cookie, so an <img> cannot end anybody's session. What
+    # lax does allow is a top-level navigation, which means a link
+    # somebody deliberately clicked - and signing out when you click
+    # "sign out" is the behaviour, not the attack.
     @app.get("/logout")
     @app.post("/logout")
     def logout(request: Request):

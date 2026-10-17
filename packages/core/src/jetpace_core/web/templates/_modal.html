@@ -69,28 +69,22 @@
             <input name="host" type="text" required
                    placeholder="192.168.1.50" autocomplete="off"
                    inputmode="decimal">
-            <small>The serial-to-TCP converter the instrument is wired
-                   to.</small>
           </label>
           <label class="field field-narrow">
             <span>Port</span>
             <input name="port" type="number" min="1" max="65535"
                    value="{{ default_port }}" required>
-            <small>502 in gateway mode.</small>
           </label>
           <label class="field field-narrow">
             <span>Slave&nbsp;ID</span>
             <input name="unit_id" type="number" min="1" max="247"
                    value="1" required>
-            <small>Set on the instrument.</small>
           </label>
         </div>
         <label class="field">
           <span>Converter name <em>optional</em></span>
           <input name="gateway_label" type="text" autocomplete="off"
                  placeholder="Block A panel">
-          <small>Only used when this converter is new to the system.
-                 An existing one keeps its name and its bus timings.</small>
         </label>
       </fieldset>
 
@@ -100,10 +94,7 @@
           <label class="field field-grow">
             <span>Device type</span>
             <span class="select-wrap">
-              <select name="model" required
-                      hx-get="/partials/device-type"
-                      hx-target="#type-note" hx-swap="innerHTML"
-                      hx-trigger="change">
+              <select name="model" required>
                 {% for code, entry in device_types.items() %}
                   <option value="{{ code }}">{{ entry.title }}</option>
                 {% endfor %}
@@ -117,7 +108,6 @@
                    maxlength="31" value="{{ suggested_code }}"
                    autocomplete="off"
                    pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,30}">
-            <small>Permanent. Used in reports.</small>
           </label>
         </div>
         <label class="field">
@@ -125,7 +115,6 @@
           <input name="name" type="text" required autocomplete="off"
                  placeholder="Filling room corridor">
         </label>
-        <p class="field-note" id="type-note">{% include "_type_note.html" %}</p>
       </fieldset>
 
       <fieldset id="limit-fields">
@@ -142,12 +131,6 @@
                    autocomplete="off" placeholder="e.g. -5">
           </label>
         </div>
-        <small class="field-help">
-          Leave a side blank for no limit on it. A set point is never
-          edited &mdash; changing one records a new value and keeps the
-          old, so a reading stays judged against the limit that applied
-          when it was taken.
-        </small>
       </fieldset>
 
       <div class="probe-row">

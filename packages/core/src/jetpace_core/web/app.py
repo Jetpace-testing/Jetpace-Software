@@ -778,21 +778,17 @@ def create_app(dsn: str,
                 f"has {', '.join(sorted(catalogue))}.", "model")
         return entry[1]
 
-    @app.get("/partials/device-type", response_class=HTMLResponse)
-    def partial_device_type(request: Request, model: str | None = None):
-        """
-        What the chosen type reads, in words, with its datasheet numbers.
-
-        The form has no field for a register address. This is what makes
-        that visible rather than merely true.
-        """
-        auth_routes.require(request, permissions.DEVICE_ADD)
-        try:
-            device_type = selected_type(model)
-        except writes.WriteRejected as exc:
-            return HTMLResponse(f"<em>{exc.message}</em>")
-        return templates.TemplateResponse(request, "_type_note.html",
-                                          {"device_type": device_type})
+    # `/partials/device-type` stood here and rendered a note under the
+    # type dropdown saying which registers the chosen instrument would be
+    # read at, with their datasheet numbers. It went with the rest of the
+    # form's explanatory text.
+    #
+    # The fact it was making is not lost: a device's page shows its model,
+    # revision and the datasheet its register map is pinned to, which is
+    # where somebody checking a commissioned instrument actually looks.
+    # The route is gone rather than left unreachable, because a handler
+    # nothing calls is a handler nobody maintains and everybody still has
+    # to review.
 
     @app.post("/partials/probe", response_class=HTMLResponse)
     def partial_probe(request: Request,

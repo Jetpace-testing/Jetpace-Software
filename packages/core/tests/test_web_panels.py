@@ -537,16 +537,47 @@ def test_the_modal_collects_exactly_what_an_operator_knows(monkeypatch):
         assert f'name="{forbidden}"' not in modal, forbidden
 
 
-def test_the_form_says_which_registers_it_will_read(monkeypatch):
+def test_the_form_carries_no_explanatory_hints(monkeypatch):
     """
-    The other half of the same point. The operator cannot CHANGE an
-    address, and they can SEE every one, with the datasheet number it
-    came from - which is what makes "this form cannot set a wrong
-    address" checkable by the person using it rather than only by a test.
+    The add-device form used to print a line of help under almost every
+    field, plus a note saying which registers the chosen type would be
+    read at. All of it has gone: an operator commissioning the fourth of
+    thirty instruments is reading the labels, not the prose.
+
+    The thing those lines were PROVING - that the form has no field
+    which can set a register address - is still true and still tested,
+    by test_the_modal_collects_exactly_what_an_operator_knows above.
+    Where a commissioned device's register map came from is shown on the
+    device's own page, which is where somebody checking one looks.
     """
     stub(monkeypatch)
     body = TestClient(create_app(DSN, _one_product())).get("/").text
-    assert "40001" in body and "40014" in body
+    modal = body.split('id="modal-add-device"', 1)[1].split("</form>", 1)[0]
+
+    assert "40001" not in modal, "the register note is gone"
+    for gone in ("The serial-to-TCP converter",
+                 "502 in gateway mode",
+                 "Set on the instrument",
+                 "Permanent. Used in reports",
+                 "Leave a side blank"):
+        assert gone not in modal, gone
+
+    # The labels, the units and the in-field examples stay: those are
+    # what the field IS, not an explanation of it.
+    for kept in ('name="host"', 'name="unit_id"', 'name="low"',
+                 "Converter address", "Slave", "LSP",
+                 'placeholder="192.168.1.50"'):
+        assert kept in modal, kept
+
+
+def test_a_device_page_still_says_where_its_register_map_came_from():
+    """
+    The fact the form's note was carrying, in the place it belongs: a
+    commissioned device shows its model, its revision and the datasheet
+    the map is pinned to.
+    """
+    page = (HERE / "templates" / "device.html").read_text(encoding="utf-8")
+    assert "datasheet_ref" in page or "Register map pinned" in page
 
 
 def test_the_form_does_not_promise_a_device_appears_instantly(monkeypatch):

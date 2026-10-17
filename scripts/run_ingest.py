@@ -1,4 +1,4 @@
-"""
+r"""
 Subscribe to the broker and write what arrives into the historian.
 
     uv run python scripts/run_ingest.py [options]

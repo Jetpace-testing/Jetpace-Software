@@ -1,4 +1,4 @@
-"""
+r"""
 Run the poller against whatever config/prototype.toml describes.
 
     uv run python scripts/run_poller.py [options]

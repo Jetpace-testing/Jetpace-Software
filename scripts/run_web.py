@@ -1,4 +1,4 @@
-"""
+r"""
 Serve the dashboard.
 
     uv run python scripts/run_web.py [options]

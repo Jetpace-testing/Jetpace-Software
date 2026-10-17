@@ -1359,18 +1359,6 @@ footer.foot { display: flex; gap: 18px; justify-content: space-between;
 .account-roles li.none { background: var(--canvas); color: var(--muted);
                          font-weight: 500; }
 
-/* The automatic logoff, said out loud. A poll does not postpone it, so a
- * dashboard sitting open signs itself out while apparently being
- * watched; this turns that surprise into something to plan around. */
-.account-expiry {
-  margin: 0; padding: 10px 14px; font-size: var(--t-9);
-  color: var(--ink-2); line-height: 1.45;
-  border-top: 1px solid var(--border); background: var(--canvas);
-}
-.account-expiry strong { color: var(--ink); font-variant-numeric: tabular-nums; }
-.account-expiry.soon { color: var(--critical); }
-.account-expiry.soon strong { color: var(--critical); }
-
 .account-items { padding: 6px; border-top: 1px solid var(--border); }
 .account-items a, .account-out button {
   display: flex; align-items: center; gap: 9px; width: 100%;

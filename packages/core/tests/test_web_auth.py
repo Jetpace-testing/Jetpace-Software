@@ -373,10 +373,10 @@ def test_the_dashboard_reports_presence_because_it_cannot_be_inferred(
     client.cookies.set(identity.COOKIE, "pretend")
 
     r = client.post("/activity")
-    assert r.status_code == 200
-    # The new deadline comes back, because the account menu prints it and
-    # a countdown that disagrees with the session is worse than none.
-    assert r.json()["expires_at"] == "2026-10-16T17:45:00+00:00"
+    # 204: the gate slid the session before the handler ran, and there is
+    # nothing left to say now that the menu prints no deadline.
+    assert r.status_code == 204
+    assert not r.content
 
 
 def test_presence_cannot_be_reported_without_a_session(anonymous):
@@ -404,18 +404,6 @@ def test_an_empty_chair_sends_no_ping():
     assert "scroll" not in listeners
     # Once a minute at most, against a fifteen-minute window.
     assert "}, 60000);" in block
-
-
-def test_the_countdown_follows_the_session_rather_than_the_page_load():
-    """
-    The deadline moves while the page stays put - every ping writes a
-    new one. Parsing data-expires once at load would count down to a
-    logout that is not going to happen, which is the same class of
-    mistake as rendering the pre-slide expiry server-side.
-    """
-    base = (HERE / "templates" / "_base.html").read_text(encoding="utf-8")
-    tick = base.split("function tick() {", 2)[2].split("}", 1)[0]
-    assert "note.dataset.expires" in tick
 
 
 def test_the_idle_limit_is_short_enough_to_mean_something():
@@ -523,14 +511,17 @@ def test_signing_out_from_the_menu_is_a_post(monkeypatch):
         or 'action="/logout"' in out
 
 
-def test_the_menu_says_when_the_session_ends(monkeypatch):
+def test_the_menu_does_not_announce_the_deadline(monkeypatch):
     """
-    Automatic logoff is fifteen minutes and a poll deliberately does not
-    postpone it, so a dashboard sitting open signs itself out while
-    apparently being watched. Saying when turns a surprise into
-    something somebody can plan around.
+    It used to read "Signs out at 10:54 - about 14 minutes from now".
+    Removed on request: a countdown in the corner of the screen reads as
+    a threat all day.
+
+    The timer itself is untouched - IDLE_MINUTES still decides it, the
+    presence ping still extends it, and an expired session still goes to
+    the login. Only the notice is gone.
     """
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timezone
 
     person = identity.Principal(
         user_id=1, username="rshah", full_name="Rishi Shah", tenant_id=1,
@@ -544,9 +535,15 @@ def test_the_menu_says_when_the_session_ends(monkeypatch):
                         raise_server_exceptions=False)
     client.cookies.set(identity.COOKIE, "x")
     body = client.get("/", headers={"accept": "text/html"}).text
-    assert "Signs out at" in body
-    assert "17:45" in body
-    assert 'data-expires="2026-10-16T17:45:00+00:00"' in body
+
+    for gone in ("Signs out at", "data-expires", "account-expiry",
+                 "minutes from now"):
+        assert gone not in body, gone
+    # The way out stays. It is the menu's reason for existing.
+    assert 'action="/logout"' in body and "Sign out" in body
+    # And no orphaned styling for a line that no longer renders.
+    css = (HERE / "static" / "app.css").read_text(encoding="utf-8")
+    assert "account-expiry" not in css
 
 
 def test_the_deadline_reported_is_the_one_this_request_leaves_behind():
@@ -582,29 +579,3 @@ def test_the_menu_can_be_closed_from_the_keyboard():
     assert 'ev.key === "Escape"' in script
     assert "focusout" in script
     assert 'aria-haspopup="menu"' in base
-
-
-def test_the_countdown_timer_only_runs_while_the_menu_is_open():
-    """
-    A timer ticking on every page for a line nobody is looking at keeps
-    a laptop awake for nothing.
-    """
-    base = (HERE / "templates" / "_base.html").read_text(encoding="utf-8")
-    assert "if (!menu.hidden) { tick(); }" in base
-
-
-def test_the_sign_out_time_is_not_rendered_in_utc_beside_a_local_clock():
-    """
-    FOUND BY LOOKING AT IT. The menu said "Signs out at 12:42" while the
-    header clock two divs away said "5:57 PM" - the same instant, five
-    and a half hours apart, on the one line whose entire job is to be
-    believed.
-
-    The clock uses toLocaleTimeString, so the deadline has to as well.
-    The server's fallback is labelled UTC rather than left bare: a
-    browser with no script then shows a time that is awkward instead of
-    a time that is wrong.
-    """
-    base = (HERE / "templates" / "_base.html").read_text(encoding="utf-8")
-    assert "toLocaleTimeString" in base.split("The account menu.", 1)[1]
-    assert "}} UTC</strong>" in base

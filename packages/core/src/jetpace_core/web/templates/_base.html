@@ -260,25 +260,6 @@
               {% endfor %}
             </ul>
 
-            {% if me.expires_at %}
-              {# The TIME is written by script, from the ISO stamp, with
-                 toLocaleTimeString - the same call the header clock uses
-                 two divs away. Rendering it server-side printed UTC
-                 against a local-time clock: "signs out at 12:42" beside
-                 "5:57 PM", five and a half hours apart, on the one line
-                 whose whole job is to be trusted.
-
-                 The server's fallback is labelled UTC rather than left
-                 bare, so a browser with no script shows a time that is
-                 awkward instead of a time that is wrong. #}
-              <p class="account-expiry" id="account-expiry"
-                 data-expires="{{ me.expires_at.isoformat() }}">
-                Signs out at
-                <strong class="account-at">{{
-                  me.expires_at.strftime('%H:%M') }} UTC</strong>
-                <span class="account-countdown"></span>
-              </p>
-            {% endif %}
 
             <div class="account-items">
               <a role="menuitem" href="/password">
@@ -686,7 +667,6 @@ function ready(fn) {
   function open() {
     menu.hidden = false;
     button.setAttribute("aria-expanded", "true");
-    tick();
     var first = menu.querySelector("[role=menuitem]");
     if (first) { first.focus(); }
   }
@@ -723,49 +703,6 @@ function ready(fn) {
     }
   });
 
-  // --- how long is left -------------------------------------------------
-  //
-  // The server renders the deadline; this only turns it into a sentence
-  // and keeps it current. THE CLOCK IS NOT CONSULTED for anything that
-  // matters: the session expires in the database, at a time the database
-  // set, and a browser whose clock is wrong gets a wrong COUNTDOWN and
-  // the correct LOGOUT. Reading the remaining time off the server's
-  // timestamp rather than trusting the browser to agree about "now" is
-  // the only part worth care.
-  var note = document.getElementById("account-expiry");
-  var out = note && note.querySelector(".account-countdown");
-  var at = note && note.querySelector(".account-at");
-
-  function tick() {
-    // READ EVERY TIME, not once at load. The presence ping below writes a
-    // new deadline into data-expires whenever it extends the session, and
-    // a value captured when the page loaded would count down to a logout
-    // that is no longer going to happen.
-    var deadline = note ? Date.parse(note.dataset.expires) : NaN;
-    if (!out || isNaN(deadline)) { return; }
-    if (at) {
-      at.textContent = new Date(deadline).toLocaleTimeString(undefined, {
-        hour: "2-digit", minute: "2-digit"
-      });
-    }
-    var left = Math.round((deadline - Date.now()) / 60000);
-    if (left > 1) {
-      out.textContent = "— about " + left + " minutes from now";
-      note.classList.remove("soon");
-    } else if (left >= 0) {
-      out.textContent = "— in under a minute";
-      note.classList.add("soon");
-    } else {
-      // Past it. The next thing this page does will redirect to the
-      // login, so say that rather than counting upwards into nonsense.
-      out.textContent = "— any moment now";
-      note.classList.add("soon");
-    }
-  }
-
-  // Only while the menu is open. A timer on every page for a line nobody
-  // is reading is a timer that keeps a laptop awake.
-  setInterval(function () { if (!menu.hidden) { tick(); } }, 20000);
 })();
 
 // Presence.
@@ -782,7 +719,6 @@ function ready(fn) {
 // flag is set, one tiny POST extends the session and clears it. An empty
 // chair sets no flag, sends nothing, and still signs itself out.
 (function () {
-  var note = document.getElementById("account-expiry");
   if (!document.getElementById("account-button")) { return; }
 
   var touched = false;
@@ -804,11 +740,7 @@ function ready(fn) {
     // ping that arrived without the session cookie would be answered 401
     // and send a working dashboard to the login page - too expensive a
     // thing to leave resting on a default nobody can see.
-    fetch("/activity", {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { "Accept": "application/json" }
-    })
+    fetch("/activity", { method: "POST", credentials: "same-origin" })
       .then(function (r) {
         // The session went while we were not looking - the tab was
         // asleep, or the machine was. Go where the gate says rather
@@ -816,13 +748,6 @@ function ready(fn) {
         // sends HX-Redirect, and it does not always mean the login.
         if (r.status === 401 || r.status === 303) {
           window.location = r.headers.get("HX-Redirect") || "/login";
-          return null;
-        }
-        return r.ok ? r.json() : null;
-      })
-      .then(function (data) {
-        if (data && data.expires_at && note) {
-          note.dataset.expires = data.expires_at;
         }
       })
       .catch(function () {

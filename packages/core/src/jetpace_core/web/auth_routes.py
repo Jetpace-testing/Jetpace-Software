@@ -39,8 +39,7 @@ import logging
 from urllib.parse import urlsplit
 
 from fastapi import Form, Request
-from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
-                               Response)
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from .. import permissions as perms
 from .. import security
@@ -378,14 +377,13 @@ def install(app, dsn: str, templates) -> None:
     # is not a permission check and it never names another account.
     #
     # A POST, so `counts_as_activity` already returned True and the gate
-    # slid the session before this body runs. It answers with the new
-    # deadline because the account menu prints that deadline, and a
-    # countdown that disagrees with the session is worse than none.
-    @app.post("/activity")
+    # slid the session before this body runs: by the time anything here
+    # executes, the work is done. It answered with the new deadline while
+    # the account menu printed one; the menu no longer does, so it
+    # answers with nothing rather than with a field no caller reads.
+    @app.post("/activity", status_code=204)
     def activity(request: Request):
-        deadline = request.state.principal.expires_at
-        return JSONResponse(
-            {"expires_at": deadline.isoformat() if deadline else None})
+        return Response(status_code=204)
 
     # --- changing your own password ---------------------------------------
 

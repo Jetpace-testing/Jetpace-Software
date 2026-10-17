@@ -104,6 +104,8 @@ def test_every_route_is_public_on_purpose_or_guarded():
             continue
         if auth_routes.is_public(path) or path in auth_routes.PASSWORD_PATHS:
             continue
+        if path in auth_routes.SIGNED_IN_IS_ENOUGH:
+            continue            # a short, named list in auth_routes
         if path in ("/users", "/users/{username}/state"):
             continue            # guarded inside auth_routes, checked below
         if path.startswith(("/api/docs", "/openapi", "/docs", "/redoc")):
@@ -330,6 +332,90 @@ def test_a_polling_partial_does_not_count_as_being_present():
                          ("GET", "/api/trend"),
                          ("POST", "/partials/commission")):
         assert auth_routes.counts_as_activity(R(method, path)), path
+
+
+def test_the_dashboard_reports_presence_because_it_cannot_be_inferred(
+        monkeypatch):
+    """
+    THE FAULT THE RULE ABOVE LEFT BEHIND.
+
+    Requests push the idle timer forward and a poll deliberately does
+    not - but a person working in this dashboard makes almost no other
+    request. The panels refresh themselves, the live table's filters run
+    in the browser, and reading a screen sends nothing. Measured on this
+    install, `session.last_seen_at` never moved more than a minute and a
+    half past sign-in in fifteen consecutive sessions: the fifteen
+    minutes ran from SIGNING IN, and an operator at the keyboard was
+    signed out mid-task.
+
+    So presence is reported rather than inferred, and the report is a
+    POST - which `counts_as_activity` already extends the session for.
+    """
+    class R:
+        def __init__(self, method, path):
+            self.method = method
+            self.url = type("U", (), {"path": path})()
+
+    assert auth_routes.counts_as_activity(R("POST", "/activity"))
+
+    from datetime import datetime, timezone
+    person = identity.Principal(
+        user_id=1, username="rshah", full_name="Rishi Shah", tenant_id=1,
+        site_roles={1: frozenset({"viewer"})},
+        expires_at=datetime(2026, 10, 16, 17, 45, tzinfo=timezone.utc))
+    monkeypatch.setattr(q, "connect", lambda dsn: Conn())
+    monkeypatch.setattr(identity, "count_users", lambda conn: 1)
+    monkeypatch.setattr(identity, "resolve",
+                        lambda conn, t, slide=True: person)
+    client = TestClient(create_app(DSN, P.load(["environment"])),
+                        raise_server_exceptions=False,
+                        follow_redirects=False)
+    client.cookies.set(identity.COOKIE, "pretend")
+
+    r = client.post("/activity")
+    assert r.status_code == 200
+    # The new deadline comes back, because the account menu prints it and
+    # a countdown that disagrees with the session is worse than none.
+    assert r.json()["expires_at"] == "2026-10-16T17:45:00+00:00"
+
+
+def test_presence_cannot_be_reported_without_a_session(anonymous):
+    """It is behind the gate like everything else: no session, no slide."""
+    assert anonymous.post("/activity").status_code == 401
+
+
+def test_an_empty_chair_sends_no_ping():
+    """
+    THE WHOLE CONTROL RESTS ON THIS. The ping is sent only when a real
+    input event has happened since the last one, so an unattended
+    machine sends nothing and still signs itself out - which is what 21
+    CFR 11.10(d) and Annex 11 §12 are asking for.
+
+    "scroll" is deliberately not one of the events: HTMX swapping a
+    panel can produce one, which would make the page's own refresh look
+    like a person after all.
+    """
+    base = (HERE / "templates" / "_base.html").read_text(encoding="utf-8")
+    block = base.split("// Presence.", 1)[1]
+    assert "if (!touched) { return; }" in block
+    for event in ("pointerdown", "keydown", "wheel", "touchstart"):
+        assert event in block, event
+    listeners = block.split("].forEach", 1)[0].split("[", 1)[1]
+    assert "scroll" not in listeners
+    # Once a minute at most, against a fifteen-minute window.
+    assert "}, 60000);" in block
+
+
+def test_the_countdown_follows_the_session_rather_than_the_page_load():
+    """
+    The deadline moves while the page stays put - every ping writes a
+    new one. Parsing data-expires once at load would count down to a
+    logout that is not going to happen, which is the same class of
+    mistake as rendering the pre-slide expiry server-side.
+    """
+    base = (HERE / "templates" / "_base.html").read_text(encoding="utf-8")
+    tick = base.split("function tick() {", 2)[2].split("}", 1)[0]
+    assert "note.dataset.expires" in tick
 
 
 def test_the_idle_limit_is_short_enough_to_mean_something():

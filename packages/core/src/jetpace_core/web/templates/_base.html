@@ -734,11 +734,14 @@ function ready(fn) {
   // the only part worth care.
   var note = document.getElementById("account-expiry");
   var out = note && note.querySelector(".account-countdown");
-  var deadline = note ? Date.parse(note.dataset.expires) : NaN;
-
   var at = note && note.querySelector(".account-at");
 
   function tick() {
+    // READ EVERY TIME, not once at load. The presence ping below writes a
+    // new deadline into data-expires whenever it extends the session, and
+    // a value captured when the page loaded would count down to a logout
+    // that is no longer going to happen.
+    var deadline = note ? Date.parse(note.dataset.expires) : NaN;
     if (!out || isNaN(deadline)) { return; }
     if (at) {
       at.textContent = new Date(deadline).toLocaleTimeString(undefined, {
@@ -763,6 +766,71 @@ function ready(fn) {
   // Only while the menu is open. A timer on every page for a line nobody
   // is reading is a timer that keeps a laptop awake.
   setInterval(function () { if (!menu.hidden) { tick(); } }, 20000);
+})();
+
+// Presence.
+//
+// The session's idle timer is the automatic logoff of 21 CFR 11.10(d) and
+// Annex 11 §12, and the server refuses - correctly - to let this page's
+// own polling count as somebody being here. But almost nothing a person
+// does in this dashboard reaches the server either: the panels refresh
+// themselves, the live table filters in the browser, and reading a screen
+// sends nothing at all. So the fifteen minutes ran from signing in, and
+// an operator watching a cascade got thrown out mid-shift.
+//
+// This says it explicitly. Real input sets a flag; once a minute, if the
+// flag is set, one tiny POST extends the session and clears it. An empty
+// chair sets no flag, sends nothing, and still signs itself out.
+(function () {
+  var note = document.getElementById("account-expiry");
+  if (!document.getElementById("account-button")) { return; }
+
+  var touched = false;
+  function mark() { touched = true; }
+
+  // Input events only. NOT "scroll", which fires when HTMX swaps a panel
+  // and would make the page's own refresh look like a person after all -
+  // the exact mistake this whole mechanism exists to avoid. "wheel" and
+  // "keydown" are a person; a programmatic swap produces neither.
+  ["pointerdown", "pointermove", "keydown", "wheel", "touchstart"]
+    .forEach(function (name) {
+      document.addEventListener(name, mark, { passive: true, capture: true });
+    });
+
+  setInterval(function () {
+    if (!touched) { return; }
+    touched = false;
+    // credentials spelled out. Same-origin is already the default, and a
+    // ping that arrived without the session cookie would be answered 401
+    // and send a working dashboard to the login page - too expensive a
+    // thing to leave resting on a default nobody can see.
+    fetch("/activity", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Accept": "application/json" }
+    })
+      .then(function (r) {
+        // The session went while we were not looking - the tab was
+        // asleep, or the machine was. Go where the gate says rather
+        // than leaving a dashboard that silently answers nothing; it
+        // sends HX-Redirect, and it does not always mean the login.
+        if (r.status === 401 || r.status === 303) {
+          window.location = r.headers.get("HX-Redirect") || "/login";
+          return null;
+        }
+        return r.ok ? r.json() : null;
+      })
+      .then(function (data) {
+        if (data && data.expires_at && note) {
+          note.dataset.expires = data.expires_at;
+        }
+      })
+      .catch(function () {
+        // The network or the database is down. Say nothing: the next
+        // minute tries again, and the gate is already refusing requests
+        // rather than falling open.
+      });
+  }, 60000);
 })();
 </script>
 

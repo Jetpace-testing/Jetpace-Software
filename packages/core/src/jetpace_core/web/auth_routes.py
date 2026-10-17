@@ -19,9 +19,18 @@ five seconds. If that counted as activity, the automatic logoff required
 by 21 CFR 11.10(d) and Annex 11 §12 would never fire on a machine with a
 browser open - which is every machine this runs on. So a GET of
 `/partials/...` resolves the session WITHOUT extending it, and everything
-else extends it. A dashboard left open on a plant floor therefore still
-signs itself out, while somebody actually using it never gets thrown out
-mid-task.
+else extends it.
+
+That alone was not enough, and the fault it left is worth recording
+because the reasoning looked sound. Requests extend the session, but a
+person working in this dashboard makes almost none: the panels refresh
+themselves, the live table's filters run in the browser, and reading a
+screen is not a request at all. On this install `session.last_seen_at`
+never moved more than a minute and a half past sign-in across fifteen
+sessions - so the fifteen minutes ran from SIGNING IN rather than from
+the last interaction, and an operator at the keyboard was signed out
+mid-task. `POST /activity` fixes that by reporting real input explicitly;
+see the route for why that keeps the control intact.
 """
 
 from __future__ import annotations
@@ -30,7 +39,8 @@ import logging
 from urllib.parse import urlsplit
 
 from fastapi import Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import (HTMLResponse, JSONResponse, RedirectResponse,
+                               Response)
 
 from .. import permissions as perms
 from .. import security
@@ -65,6 +75,15 @@ PUBLIC_PREFIXES = ("/static/",)
 # Reached while signed in but not yet allowed to do anything else.
 PASSWORD_PATHS = frozenset({"/password"})
 
+# Behind the gate, and asking for nothing beyond being signed in.
+#
+# Listed here rather than waved through inside the test that walks the
+# routes, so the exemption lives in the application where a reviewer
+# meets it. `/activity` carries no instrument data and names no account:
+# it says "the person holding this session touched the keyboard", which
+# every role may say about itself and no role may say about anybody else.
+SIGNED_IN_IS_ENOUGH = frozenset({"/activity"})
+
 
 def is_public(path: str) -> bool:
     return path in PUBLIC_PATHS or path.startswith(PUBLIC_PREFIXES)
@@ -76,7 +95,9 @@ def counts_as_activity(request: Request) -> bool:
 
     A GET of a partial is the page refreshing itself on a timer - four of
     them do, between every 5 and every 30 seconds. Everything else is a
-    person: a page, a form, a chart they asked for by clicking a range.
+    person: a page, a form, a chart they asked for by clicking a range,
+    or `POST /activity`, which is the browser saying somebody touched the
+    keyboard.
 
     POSTs to `/partials/...` DO count, because those are the
     commissioning form, which is somebody typing.
@@ -333,6 +354,38 @@ def install(app, dsn: str, templates) -> None:
         response = RedirectResponse("/login", status_code=303)
         response.delete_cookie(identity.COOKIE, path="/")
         return response
+
+    # --- somebody is still here -------------------------------------------
+    #
+    # THE ONE REQUEST WHOSE ONLY JOB IS TO SAY A PERSON IS PRESENT.
+    #
+    # The idle timer is pushed forward by requests, and this dashboard is
+    # built so that a person using it hardly makes any - the panels poll
+    # themselves and are deliberately not activity, the live table's
+    # filters run in the browser, and reading a screen is not a request.
+    # The result was a fifteen-minute limit measured from SIGNING IN.
+    #
+    # So the browser reports presence instead of it being inferred: real
+    # input - a key, a click, a wheel, the pointer moving - sets a flag,
+    # and at most once a minute this fires. NOBODY AT THE KEYBOARD MEANS
+    # NO INPUT, means no request, means the logoff still happens on an
+    # unattended machine, which is the entire point of the control. An
+    # idle tab is silent; it is presence that costs a request.
+    #
+    # The header is a browser's word, and that is fine: the worst a
+    # person can do by forging it is hold their OWN session open, which
+    # they could already do by reloading the page every ten minutes. It
+    # is not a permission check and it never names another account.
+    #
+    # A POST, so `counts_as_activity` already returned True and the gate
+    # slid the session before this body runs. It answers with the new
+    # deadline because the account menu prints that deadline, and a
+    # countdown that disagrees with the session is worse than none.
+    @app.post("/activity")
+    def activity(request: Request):
+        deadline = request.state.principal.expires_at
+        return JSONResponse(
+            {"expires_at": deadline.isoformat() if deadline else None})
 
     # --- changing your own password ---------------------------------------
 

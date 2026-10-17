@@ -48,8 +48,8 @@ from .. import selection
 # Re-exported from jetpace_core.selection, which is where they moved when
 # the poller needed the same answer: it has to know which register maps
 # exist to know which devices in the database it can read, and asking this
-# module would have meant loading FastAPI and Jinja to find out where
-# DP_PV lives. They are re-exported rather than referenced through the
+# module would have meant loading FastAPI and Jinja to find out where a
+# register lives. They are re-exported rather than referenced through the
 # other module so that this file stays the one place a reader looks for
 # the product seam.
 KNOWN = selection.KNOWN
@@ -177,15 +177,21 @@ class Product:
     slug: str
     label: str
 
-    # Where its templates live. Searched after core's, so a product
-    # cannot shadow the shell.
-    templates: Path
+    # Optional: where its templates live. Searched after core's, so a
+    # product cannot shadow the shell. None for a product with no pages.
+    templates: Path | None = None
 
-    # Called once with the Shell to build the product's routes. A
-    # callable rather than a ready-made APIRouter because the routes need
-    # the connection string and the shared template environment, and
+    # Optional: called once with the Shell to build the product's routes.
+    # A callable rather than a ready-made APIRouter because the routes
+    # need the connection string and the shared template environment, and
     # neither exists at import time.
-    routes: Callable[[Shell], APIRouter]
+    #
+    # A product with NO ROUTES is a real state, not a broken one: a
+    # package that contributes instruments and figures but has no page of
+    # its own yet. It gets no navigation entry, because the shell's own
+    # nav already settles that question - an item that 404s is worse than
+    # one that is visibly not there yet.
+    routes: Callable[[Shell], APIRouter] | None = None
 
     # Optional: a directory of its own static files, and the stylesheet
     # within it that every page of this product needs. Served under
@@ -230,7 +236,11 @@ class Product:
                 f"used as a URL path and a static mount point.")
         if self.slug != self.slug.lower():
             raise ValueError(f"product slug {self.slug!r} must be lowercase.")
-        if not self.templates.is_dir():
+        if self.routes is not None and self.templates is None:
+            raise ValueError(
+                f"product {self.slug!r} has routes but no template "
+                f"directory to render them from.")
+        if self.templates is not None and not self.templates.is_dir():
             raise ValueError(
                 f"product {self.slug!r} names a template directory that does "
                 f"not exist: {self.templates}. In a frozen build this means "

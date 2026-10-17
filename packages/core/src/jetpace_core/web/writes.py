@@ -31,8 +31,9 @@ THREE RULES, all of them enforced below rather than remembered.
 NOTHING HERE WRITES TO AN INSTRUMENT. Modbus writes are disabled at build
 time, not by configuration (CLAUDE.md), and commissioning a device is a
 database act: it records what was found on the bus, it does not configure
-the device. The register that sets a slave address is in
-`NEVER_WRITE` and getting it wrong costs a site visit.
+the device. Instruments carry writable registers that set a slave address
+or a baud rate, and a device knocked off the bus by a dashboard is a site
+visit, not a bug report.
 """
 
 from __future__ import annotations

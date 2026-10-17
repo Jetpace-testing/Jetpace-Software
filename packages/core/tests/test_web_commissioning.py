@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from bench import BENCH, bench_product
 from jetpace_core.web import products as P
 from jetpace_core.web import queries as q
 from jetpace_core.web import writes as w
@@ -26,16 +27,9 @@ DSN = "postgresql://unused:unused@127.0.0.1:1/unused"
 TEMPLATES = HERE / "templates"
 
 
+# The instrument these tests commission is fabricated; bench.py says why.
 def product():
-    """
-    The real environment product.
-
-    The form is made OF what a product contributes, so a fabricated one
-    would be testing the fabrication rather than the seam. What is
-    asserted here is the mechanism; the iDP-100's registers are pinned
-    against the datasheet in packages/environment.
-    """
-    return P.load(["environment"])
+    return bench_product()
 
 
 class Answered:
@@ -45,7 +39,7 @@ class Answered:
         def __init__(self, param, value):
             self.param, self.value = param, value
 
-    values = (_V("dp", 12.4), _V("dp_unit", 1.0))
+    values = (_V("pv", 12.4), _V("mode", 1.0))
 
 
 class Silent:
@@ -106,7 +100,7 @@ def commission(monkeypatch, client, captured=None, **over):
 
     monkeypatch.setattr(w, "commission_device", fake_commission)
     body = {"host": "127.0.0.1", "port": "5021", "unit_id": "5",
-            "model": "iDP-100", "code": "DP-010", "name": "Gowning room",
+            "model": "BENCH-1", "code": "DP-010", "name": "Gowning room",
             "low": "-20", "high": "-5"}
     body.update(over)
     return client.post("/partials/commission", data=body)
@@ -122,27 +116,27 @@ def test_a_device_that_answers_shows_what_it_is_reading(monkeypatch, client):
     set_probe(monkeypatch, Answered)
     body = client.post("/partials/probe", data={
         "host": "127.0.0.1", "port": "5021", "unit_id": "5",
-        "model": "iDP-100"}).text
+        "model": "BENCH-1"}).text
     assert "answered" in body
-    assert "Differential pressure" in body
+    assert "Process value" in body
     assert "12" in body
 
 
 def test_the_reading_is_shown_to_the_decimals_the_product_declared():
     """
-    `dp` is declared with decimals=0, because a cleanroom cascade is read
-    in whole pascals. "12.40 Pa" on a commissioning screen implies a
-    precision the instrument does not have.
+    The form rounds to what the POINT declares, not to what arrived. A
+    product that reads a value in whole units says decimals=0, and a
+    commissioning screen showing "12.40" would imply a precision the
+    instrument does not have.
     """
-    from jetpace_environment import DEVICE_TYPES
-    assert DEVICE_TYPES[0].points[0].decimals == 0
+    assert BENCH.points[0].decimals == 0
 
 
 def test_a_rounded_reading_does_not_show_a_decimal_point(monkeypatch, client):
     set_probe(monkeypatch, Answered)
     body = client.post("/partials/probe", data={
         "host": "127.0.0.1", "port": "5021", "unit_id": "5",
-        "model": "iDP-100"}).text
+        "model": "BENCH-1"}).text
     assert "12.4" not in body and "12" in body
 
 
@@ -159,14 +153,14 @@ def test_the_two_failures_are_told_apart(monkeypatch, client):
     set_probe(monkeypatch, Silent)
     silent = client.post("/partials/probe", data={
         "host": "127.0.0.1", "port": "5021", "unit_id": "9",
-        "model": "iDP-100"}).text
+        "model": "BENCH-1"}).text
     assert "The converter answered" in silent
     assert Silent.detail in silent, "the probe's own explanation is shown"
 
     set_probe(monkeypatch, Unreachable)
     gone = client.post("/partials/probe", data={
         "host": "10.0.0.9", "port": "502", "unit_id": "1",
-        "model": "iDP-100"}).text
+        "model": "BENCH-1"}).text
     assert "Nothing answered" in gone
     assert Unreachable.detail in gone
 
@@ -232,7 +226,7 @@ def test_a_silent_device_is_offered_an_override_with_a_reason(
     set_probe(monkeypatch, Silent)
     body = client.post("/partials/probe", data={
         "host": "127.0.0.1", "port": "5021", "unit_id": "9",
-        "model": "iDP-100"}).text
+        "model": "BENCH-1"}).text
     assert 'name="reason"' in body
     assert "audit" in body
 
@@ -255,13 +249,11 @@ def test_the_probe_reads_exactly_what_the_poller_will_read(monkeypatch,
     monkeypatch.setattr(modbus_client, "probe", spy)
     client.post("/partials/probe", data={
         "host": "127.0.0.1", "port": "5021", "unit_id": "5",
-        "model": "iDP-100"})
+        "model": "BENCH-1"})
 
-    from jetpace_core import inventory
-    device_type = inventory.load_device_types(["environment"])["iDP-100"]
-    expected = [(p.param, device_type.register_for(p).address,
-                 device_type.register_for(p).kind)
-                for p in device_type.points]
+    expected = [(p.param, BENCH.register_for(p).address,
+                 BENCH.register_for(p).kind)
+                for p in BENCH.points]
     assert seen["points"] == expected
 
 
@@ -311,7 +303,7 @@ def test_the_device_is_probed_again_when_it_is_committed(monkeypatch, client):
     set_probe(monkeypatch, Answered)
     commission(monkeypatch, client, captured)
     assert captured["answered"] is True
-    assert "dp=12" in captured["detail"]
+    assert "pv=12" in captured["detail"]
 
 
 def test_a_silent_device_commits_the_failure_into_the_audit_detail(
@@ -337,7 +329,7 @@ def test_a_rejection_names_the_field_it_is_about(monkeypatch, client):
     monkeypatch.setattr(w, "commission_device", refuse)
     body = client.post("/partials/commission", data={
         "host": "127.0.0.1", "port": "5021", "unit_id": "5",
-        "model": "iDP-100", "code": "DP-010", "name": "x"}).text
+        "model": "BENCH-1", "code": "DP-010", "name": "x"}).text
     assert 'data-field="code"' in body
     assert "already" in body
 
@@ -355,7 +347,7 @@ def test_a_device_type_no_product_sells_is_refused_not_substituted(
         "host": "127.0.0.1", "port": "5021", "unit_id": "5",
         "model": "EM-6400", "code": "EM-001", "name": "x"}).text
     assert "EM-6400" in body
-    assert "iDP-100" in body, "it should say what this install does carry"
+    assert "BENCH-1" in body, "it should say what this install does carry"
 
 
 # --- faults a green suite missed and a live run found ---------------------

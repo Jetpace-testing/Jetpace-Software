@@ -144,11 +144,24 @@
 
       {# The products this install actually serves, between the shell's
          own entries exactly where the design puts its product sections.
-         A customer who bought one product gets one of these. #}
+         A customer who bought one product gets one of these.
+
+         A product with NO ROUTES gets the same treatment as the five
+         shell items above that are not built: rendered, because the
+         install does carry that product, but not a link, because there
+         is no page behind it yet. Same judgement, same reason - an item
+         that 404s is worse than one that is visibly not ready. #}
       {% for p in products or [] %}
-        <a class="nav-item{{ ' active' if here == p.slug }}" href="/{{ p.slug }}">
-          {{ ico.icon('gauge') }}<span>{{ p.label }}</span>
-        </a>
+        {% if p.linked %}
+          <a class="nav-item{{ ' active' if here == p.slug }}" href="/{{ p.slug }}">
+            {{ ico.icon('gauge') }}<span>{{ p.label }}</span>
+          </a>
+        {% else %}
+          <span class="nav-item unbuilt" aria-disabled="true"
+                title="No pages yet">
+            {{ ico.icon('gauge') }}<span>{{ p.label }}</span>
+          </span>
+        {% endif %}
       {% endfor %}
 
       {% for item in tail_nav %}{{ nav_entry(item) }}{% endfor %}

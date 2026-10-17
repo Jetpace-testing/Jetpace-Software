@@ -32,6 +32,12 @@ DSN = "postgresql://unused:unused@127.0.0.1:1/unused"
 
 INSTALLED = [s for s in P.KNOWN if P.importable(s)]
 
+# The products that have a page of their own. A product may legitimately
+# have none - jetpace_environment has carried no pages since its
+# instrument was removed - and "serves its own routes" is not a question
+# that can be asked of one that declares none.
+WITH_PAGES = [s for s in INSTALLED if P.load([s])[0].routes is not None]
+
 
 def paths_of(slugs) -> set[str]:
     """Every route a dashboard serving `slugs` would answer."""
@@ -41,10 +47,22 @@ def paths_of(slugs) -> set[str]:
 
 # --- one dashboard per product --------------------------------------------
 
-@pytest.mark.parametrize("mine,theirs", [("environment", "energy"),
-                                         ("energy", "environment")])
-def test_a_product_dashboard_serves_its_own_product(mine, theirs):
+@pytest.mark.parametrize("mine", WITH_PAGES)
+def test_a_product_dashboard_serves_its_own_product(mine):
     assert f"/{mine}" in paths_of([mine])
+
+
+@pytest.mark.parametrize("slug", INSTALLED)
+def test_a_product_with_no_pages_contributes_no_routes(slug):
+    """
+    The other half of the same rule. An empty product is loaded - it
+    still carries its instruments to the commissioning form - and it adds
+    nothing to the URL space, so there is no path to find by guessing and
+    no navigation entry pointing at one.
+    """
+    if slug in WITH_PAGES:
+        pytest.skip(f"{slug} has pages")
+    assert f"/{slug}" not in paths_of([slug])
 
 
 @pytest.mark.parametrize("mine,theirs", [("environment", "energy"),
@@ -78,7 +96,7 @@ def test_the_administrative_dashboard_carries_every_product():
     interface it binds to, not a shorter menu.
     """
     served = paths_of(INSTALLED)
-    for slug in INSTALLED:
+    for slug in WITH_PAGES:
         assert f"/{slug}" in served
 
 
@@ -106,17 +124,39 @@ def test_every_instance_answers_for_its_own_health(slugs):
     assert "/healthz" in paths_of(slugs)
 
 
-def test_a_products_static_files_are_only_mounted_where_it_is_served():
+def test_a_products_static_files_are_only_mounted_where_it_is_served(
+        tmp_path):
     """
     A dashboard that does not serve a product does not serve its assets
     either, so there is nothing to find under /static/<other> - and a
     single-product install downloads one stylesheet, not two.
+
+    Fabricated rather than taken from a real product: neither product in
+    the repository ships a stylesheet today, and a test that quietly
+    stopped exercising the mount when the last one was deleted would be
+    a test that passes by not running.
     """
-    with_it = TestClient(create_app(DSN, P.load(["environment"])),
+    templates = tmp_path / "templates"
+    templates.mkdir()
+    (templates / "demo.html").write_text("{% extends '_base.html' %}",
+                                         encoding="utf-8")
+    static = tmp_path / "static"
+    static.mkdir()
+    (static / "demo.css").write_text("#demo{color:var(--ink)}",
+                                     encoding="utf-8")
+
+    def routes(shell):
+        from fastapi import APIRouter
+        return APIRouter()
+
+    demo = P.Product(slug="demo", label="Demo", templates=templates,
+                     static=static, stylesheet="demo.css", routes=routes)
+
+    with_it = TestClient(create_app(DSN, [demo]),
                          raise_server_exceptions=False)
-    without = TestClient(create_app(DSN, P.load(["energy"])),
+    without = TestClient(create_app(DSN, []),
                          raise_server_exceptions=False)
-    asset = "/static/environment/environment.css"
+    asset = "/static/demo/demo.css"
     assert with_it.get(asset).status_code == 200
     assert without.get(asset).status_code == 404
 

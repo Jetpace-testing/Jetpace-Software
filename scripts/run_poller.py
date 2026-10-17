@@ -1,5 +1,5 @@
 r"""
-Run the poller against whatever config/prototype.toml describes.
+Run the poller against the devices in the database.
 
     uv run python scripts/run_poller.py [options]
 

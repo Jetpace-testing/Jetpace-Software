@@ -104,7 +104,7 @@ def open_inventory(args: argparse.Namespace) -> inventory.DatabaseInventory:
 
     Read through `selection` and not `web.products`, which imports
     FastAPI: the poller has no business loading a web framework to find
-    out where DP_PV lives.
+    out where a register lives.
     """
     slugs = selection.enabled() or selection.KNOWN
     return inventory.DatabaseInventory(
@@ -131,8 +131,16 @@ def cmd_poller(args: argparse.Namespace) -> int:
             print("\npoller: nothing commissioned yet; watching the device "
                   "table", flush=True)
     else:
-        gateways = load_config(
-            args.config or paths.config_dir() / "prototype.toml")
+        # A file, named explicitly. There is no default sheet any more:
+        # config/prototype.toml described one differential pressure
+        # instrument and went with it. `--devices file --config <path>`
+        # still works for anybody who keeps their own.
+        if not args.config:
+            raise SystemExit(
+                "poller: --devices file needs --config <path>. There is no "
+                "default gateway sheet; the device list lives in the "
+                "database and is filled in from the dashboard.")
+        gateways = load_config(args.config)
 
     # The whole point of the Sink Protocol: three implementations, one
     # construction site, and nothing below this line knows the difference.
@@ -395,13 +403,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("poller", help="read the instruments")
     p.add_argument("--config", type=Path)
-    p.add_argument("--devices", choices=("file", "db"), default="file",
-                   help="where the device list comes from. 'file' is "
-                        "config/prototype.toml, read once at startup. 'db' "
-                        "is the device and gateway tables, re-read every "
-                        "--reload seconds, which is what lets a device "
+    p.add_argument("--devices", choices=("file", "db"), default="db",
+                   help="where the device list comes from. 'db', the "
+                        "default, is the device and gateway tables, re-read "
+                        "every --reload seconds, which is what lets a device "
                         "commissioned from the dashboard start being polled "
-                        "without restarting this process (debt #3)")
+                        "without restarting this process. 'file' reads a "
+                        "gateway sheet named with --config, once at startup")
     p.add_argument("--reload", type=float, default=10.0,
                    metavar="SECONDS",
                    help="how often to re-read the device list with "

@@ -475,14 +475,14 @@ def test_an_export_says_how_many_rows_it_gave(monkeypatch):
 def test_the_device_export_is_a_real_inventory(monkeypatch):
     stub(monkeypatch, export_devices=[{
         "code": "D1", "name": "one", "gateway": "Bus A", "host": "10.0.0.5",
-        "port": 502, "unit_id": 3, "model": "iDP-100", "model_revision": "B",
-        "vendor": "Acme", "kind": "pressure", "site": "Plant 1",
+        "port": 502, "unit_id": 3, "model": "BENCH-1", "model_revision": "B",
+        "vendor": "Acme", "kind": "temperature", "site": "Plant 1",
         "scan_class": "instantaneous", "commissioned_at": NOW}])
 
     body = TestClient(create_app(DSN)).get("/export/devices.csv").text
 
     assert "model_revision" in body
-    assert "iDP-100" in body
+    assert "BENCH-1" in body
     assert NOW.isoformat() in body
 
 
@@ -596,16 +596,15 @@ def test_the_form_does_not_promise_a_device_appears_instantly(monkeypatch):
 
 def _one_product():
     """
-    The real environment product, for the three tests above only.
+    A product with one instrument, so the form has something to offer.
 
-    Core's suite is otherwise product-free and should stay that way - but
-    the form is made OF what a product contributes, so a fabricated one
-    would be testing the fabrication. What is asserted here is the
-    mechanism, not the iDP-100's registers, which are pinned in
-    packages/environment.
+    Core's suite is otherwise product-free and should stay that way. It
+    used to load the real environment product here; that product sells
+    no instrument any more, and a fabricated one keeps these tests about
+    the mechanism. See bench.py.
     """
-    from jetpace_core.web import products as P
-    return P.load(["environment"])
+    from bench import bench_product
+    return bench_product()
 
 
 # --- the trend panel -----------------------------------------------------

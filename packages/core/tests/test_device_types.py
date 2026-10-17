@@ -6,7 +6,7 @@ every mistake a product can make in one has to surface when the
 application starts rather than when a customer submits the form. These
 tests are the list of mistakes.
 
-Uses a fabricated model rather than the real iDP-100, so core's suite
+Uses a fabricated model rather than a product's own, so core's suite
 stays independent of either product - the real maps are checked against
 their own datasheets in the product packages.
 """

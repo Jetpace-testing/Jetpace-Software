@@ -293,13 +293,20 @@ def create_app(dsn: str,
     # cannot shadow a shell template - and because that resolution is
     # silent, test_web_shell.py asserts no basename appears twice.
     templates = Jinja2Templates(
-        directory=[HERE / "templates", *(p.templates for p in products)])
+        directory=[HERE / "templates",
+                   *(p.templates for p in products
+                     if p.templates is not None)])
 
     # The navigation follows what is loaded. It used to be four literal
     # links in _base.html, two of which named products, so a customer who
     # had bought one product had a tab for the other that led to a 404.
+    #
+    # `linked` rather than the routes callable itself: the template needs
+    # to know whether there is a page to link TO, and handing a view a
+    # callable it could invoke is how a template grows a side effect.
     templates.env.globals["products"] = [
         {"slug": p.slug, "label": p.label,
+         "linked": p.routes is not None,
          "stylesheet": (f"/static/{p.slug}/{p.stylesheet}"
                         if p.stylesheet else None)}
         for p in products
@@ -802,8 +809,9 @@ def create_app(dsn: str,
         READ ONLY, and that is a build-time property rather than a
         promise: `modbus_client.probe` calls `read` and there is no write
         function in the module to call. Modbus writes are disabled at
-        build time (CLAUDE.md), and the register that sets a slave
-        address is in NEVER_WRITE because writing it costs a site visit.
+        build time (CLAUDE.md): an instrument's slave address and baud
+        rate are writable registers, and a device knocked off the bus
+        from a browser is a site visit.
         """
         auth_routes.require(request, permissions.DEVICE_ADD)
         from ..modbus_client import probe as modbus_probe
@@ -1277,7 +1285,11 @@ def create_app(dsn: str,
     # supervisor's release gate and belongs to the platform.
     shell = products_.Shell(dsn=dsn, templates=templates)
     for product in products:
-        app.include_router(product.routes(shell))
+        # A product with no pages contributes no routes. It is still
+        # loaded, because it still carries its instruments to the
+        # commissioning form.
+        if product.routes is not None:
+            app.include_router(product.routes(shell))
 
     return app
 

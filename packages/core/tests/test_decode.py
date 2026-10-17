@@ -56,7 +56,7 @@ def test_s16(register, expected):
 
 def test_s16_is_not_u16():
     """The bug this function exists to prevent, stated as a test."""
-    reversed_cascade = 65531          # what the iDP-100 sends for -5 Pa
+    reversed_cascade = 65531          # a transmitter reporting -5
     assert decode_s16(reversed_cascade) == -5
     assert decode_s16(reversed_cascade) < 0, "a reversed cascade must read negative"
 

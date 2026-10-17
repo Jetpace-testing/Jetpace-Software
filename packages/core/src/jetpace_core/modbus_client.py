@@ -93,8 +93,9 @@ def tcp_client_factory(spec: GatewaySpec) -> ModbusTcpReader:
 # row. That question is READ-ONLY and stays read-only: Modbus writes are
 # disabled at build time rather than by configuration (CLAUDE.md), and
 # commissioning is a database act that records what was found - it does
-# not configure the instrument. The register that sets a slave address is
-# in NEVER_WRITE and getting it wrong costs a site visit.
+# not configure the instrument. Instruments carry writable registers for
+# the slave address and the baud rate, and a device knocked off the bus
+# by a commissioning screen is a site visit.
 #
 # WHY THE TWO FAILURES ARE REPORTED SEPARATELY. `ModbusTcpReader.read`
 # returns None for both "the converter is not there" and "the converter is

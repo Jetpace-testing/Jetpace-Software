@@ -11,9 +11,8 @@ out through the rollups, and onto a dashboard. 39 tests passing.
 
 | | |
 |---|---|
-| `tools/sim/idp100_sim.py` | Fake iDP-100 devices over Modbus TCP. Hand-written framing |
 | `packages/core/.../decode.py` | Registers to numbers. 21 tests |
-| `packages/core/.../registers.py` | Device maps, pinned to datasheets |
+| `packages/core/.../devices.py` | How a device model is described, for any bus |
 | `packages/core/.../poller.py` | Thread per gateway, offline backoff. 18 tests |
 | `packages/core/.../modbus_client.py` | pymodbus wrapper; silence is not an exception |
 | `packages/core/.../sinks.py` | Console and Postgres behind one Protocol |
@@ -21,9 +20,7 @@ out through the rollups, and onto a dashboard. 39 tests passing.
 | `migrations/0002_rollups.sql` | Hourly and daily aggregates, `consumption()` |
 | `migrations/0003_consumption_guard.sql` | `consumption()` refuses non-counters |
 | `scripts/setup_postgres.py` | Private Postgres + Timescale. **Working** |
-| `scripts/seed_prototype.py` | Config into the database |
 | `scripts/run_poller.py` | Entry point |
-| `scripts/seed_demo.py` | 30 days of realistic history, both product shapes |
 | `packages/core/.../web/` | FastAPI + Jinja + HTMX + ECharts dashboard |
 | `scripts/run_web.py` | Serves it on port 1885 |
 | `docs/sql-practice.md` | 20 graded SQL exercises against this data |
@@ -37,17 +34,17 @@ on `127.0.0.1:5433`, schema version 3.
 uv sync
 ```
 
-Two terminals. First the devices:
-
-```bash
-uv run python tools/sim/idp100_sim.py --units 3
-```
-
-Then the poller:
+The poller, against whatever is commissioned in the database:
 
 ```bash
 uv run python scripts/run_poller.py
 ```
+
+There is no device simulator any more. It spoke one instrument's register
+map, and that instrument was removed on 17 October 2026 along with the
+pressure product built around it — so exercising the chain end to end now
+needs a real instrument, or a new simulator written for whichever one
+arrives next.
 
 The dashboard:
 
@@ -87,7 +84,6 @@ privileges. Re-running is safe at every step.
 ```bash
 python scripts/setup_postgres.py --status
 python scripts/setup_postgres.py --stop
-uv run python scripts/seed_prototype.py          # config -> database
 uv run python scripts/run_poller.py --sink postgres
 ```
 
@@ -129,8 +125,9 @@ Vendored payloads are pinned by SHA-256 in `installer/vendor/vendor.lock.json`.
   accumulates, so there is nothing to bill; it returns the counters with
   status `not_a_counter` rather than an arithmetic difference that means
   nothing.
-- **`registers.NEVER_WRITE`** lists registers that must never be written:
-  slave address, baud rate, save, auto-zero.
+- **Some registers must never be written** — slave address, baud rate,
+  save, auto-zero. Modbus writes are disabled at build time, so there is
+  no function to call; a product's register map marks them anyway.
 
 ## What measuring and running taught us
 
@@ -234,9 +231,6 @@ same layout still reads at the forty rooms a real facility has.
 - `postgresql.auto.conf` is written directly by the setup script. That file
   is really PostgreSQL's own, managed by `ALTER SYSTEM`; the installer
   should write a separate file and `include` it instead. Works, but wrong.
-- The `DP_PV` scaling is not stated in the iDP-100 datasheet, and
-  `40002`/`40003` are marked *Reserved* rather than part of the value, so
-  it is modelled as a single signed 16-bit register in whatever unit
-  `40014` selects. Confirm against a real device before it reaches a report.
-- The datasheets under `Modbus Mapping/` belong to another project and are
-  used here only as a realistic reference.
+- A point's `scale` is the number to confirm against a real instrument
+  before anything reaches a report. Many transmitters report tenths, and a
+  factor of ten is invisible on screen.

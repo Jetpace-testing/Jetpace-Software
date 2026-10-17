@@ -158,7 +158,7 @@ def port_is_free(port: int) -> bool:
     return True
 
 
-def write_config(port: int, with_sim: bool, sim_units: int,
+def write_config(port: int,
                  product_host: str = "127.0.0.1",
                  product_ports: dict[str, int] | None = None) -> Path:
     """
@@ -198,14 +198,6 @@ def write_config(port: int, with_sim: bool, sim_units: int,
     else:
         say(f"WARNING: {MOSQUITTO_EXE.name} or its config is missing, so the "
             f"broker is not in the list. Run scripts/setup_mosquitto.py")
-
-    if with_sim:
-        children.append({
-            "name": "simulator",
-            "args": [py, str(ROOT / "tools" / "sim" / "idp100_sim.py"),
-                     "--units", str(sim_units)],
-            "required": False,       # its death must not fail a health gate
-        })
 
     # --devices db, not the gateway sheet. The device list comes from the
     # device and gateway tables and is re-read every few seconds, which is
@@ -275,8 +267,9 @@ def write_config(port: int, with_sim: bool, sim_units: int,
     #
     # This block exists because of a real incident: this script was run
     # with --replace and nothing else, and its defaults quietly moved the
-    # dashboard to another port and dropped the simulator. Both are
-    # one-word flags and both failures were silent - the service came
+    # dashboard to another port and dropped the device simulator this
+    # repository used to carry. Both were one-word flags and both
+    # failures were silent - the service came
     # back up, /healthz answered ok:true because it counted readings over
     # 24 hours rather than checking freshness, and the data had stopped.
     # A config written without being read back is a config nobody
@@ -296,9 +289,8 @@ def write_config(port: int, with_sim: bool, sim_units: int,
         print(f"    {child['name']:16} {detail}{optional}", flush=True)
     print()
 
-    if not with_sim:
-        say("no simulator: the poller will read real instruments only. "
-            "Pass --with-sim if this machine has none.")
+    say("the poller reads real instruments. There is no simulator in "
+        "this repository any more - see jetpace_environment.")
 
     taken = [(c["name"], c["args"][c["args"].index("--port") + 1])
              for c in children if c["name"].startswith("web")]
@@ -350,7 +342,7 @@ def set_service_environment(config: Path) -> None:
     say(f"{CONFIG_ENV} and PYTHONPATH set for the service")
 
 
-def register(account: str, port: int, with_sim: bool, sim_units: int,
+def register(account: str, port: int,
              replace: bool = False, product_host: str = "127.0.0.1",
              product_ports: dict[str, int] | None = None) -> None:
     need_admin()
@@ -369,7 +361,7 @@ def register(account: str, port: int, with_sim: bool, sim_units: int,
         say("removing the existing registration first")
         unregister(quiet=True)
 
-    config = write_config(port, with_sim, sim_units,
+    config = write_config(port,
                           product_host=product_host,
                           product_ports=product_ports)
 
@@ -521,9 +513,6 @@ def main() -> None:
                          "re-registration is the one operation here that "
                          "can take the stack down")
     ap.add_argument("--port", type=int, default=1885)
-    ap.add_argument("--with-sim", action="store_true",
-                    help="also run the device simulator (development)")
-    ap.add_argument("--sim-units", type=int, default=3)
     ap.add_argument("--replace", action="store_true",
                     help="remove an existing registration and register again")
     ap.add_argument("--product-host", default="127.0.0.1",
@@ -556,7 +545,7 @@ def main() -> None:
 
     if args.config_only:
         print(f"\nRewriting {CONFIG_FILE.name}\n")
-        write_config(args.port, args.with_sim, args.sim_units,
+        write_config(args.port,
                      product_host=args.product_host, product_ports=pinned)
         # It is read at start, so nothing has changed yet. Saying so is
         # the point: a config written and not applied looks exactly like
@@ -566,7 +555,7 @@ def main() -> None:
         return
 
     print(f"\nRegistering {SERVICE}\n")
-    register(args.account, args.port, args.with_sim, args.sim_units,
+    register(args.account, args.port,
              replace=args.replace, product_host=args.product_host,
              product_ports=pinned)
     print(f"\nDone. It will now start at boot, before anyone signs in.\n")

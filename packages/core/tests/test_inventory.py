@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 IDP = DeviceType(
     model=DeviceModel(
-        code="iDP-100", revision="2026-10", vendor="Jetpace",
+        code="BENCH-1", revision="2026-10", vendor="Jetpace",
         datasheet_ref="x.pdf",
         registers=(
             Register("dp_pv", 40001, "s16", "Pa", "Differential pressure"),
@@ -37,7 +37,7 @@ IDP = DeviceType(
             Point("dp_unit", "unit", "Unit selector", "", decimals=0)),
     limits="dp",
 )
-TYPES = {"iDP-100": IDP}
+TYPES = {"BENCH-1": IDP}
 
 
 class FakeCursor:
@@ -77,7 +77,7 @@ def gateway_row(**over):
 
 def parameter_row(code="DP-001", param="dp", **over):
     row = {"gateway_id": 1, "code": code, "name": "Corridor", "unit_id": 1,
-           "model": "iDP-100", "param": param, "scale": None}
+           "model": "BENCH-1", "param": param, "scale": None}
     return {**row, **over}
 
 
@@ -89,8 +89,9 @@ def plan_of(gateways, parameters, types=TYPES):
 
 def test_the_address_comes_from_the_map_and_not_the_database():
     """
-    The database says a device is an iDP-100 and which parameters are on;
-    the datasheet transcription says DP_PV is at 40001. There is no
+    The database says which model a device is and which parameters are
+    on; the product's datasheet transcription says where that model's
+    registers are. There is no
     address column anywhere in the schema, deliberately - a register map
     somebody can change with an UPDATE statement is a register map that
     can silently stop matching the document it came from.
@@ -133,14 +134,14 @@ def test_no_override_falls_back_to_the_catalogue_and_not_to_one():
     """
     Null in device_parameter.scale is the common case and means "the
     product's own figure", which is 1.0 today only because debt #6 says
-    DP_PV's scaling is unconfirmed. If that figure ever changes, a
+    the scaling is unconfirmed. If that figure ever changes, a
     fallback hardcoded to 1.0 here would ignore it.
     """
     catalogue = DeviceType(
         model=IDP.model, kind="pressure", limits="dp",
         points=(Point("dp", "dp_pv", "DP", "Pa", scale=0.1),))
     plan = plan_of([gateway_row()], [parameter_row(param="dp", scale=None)],
-                   types={"iDP-100": catalogue})
+                   types={"BENCH-1": catalogue})
     assert plan.gateways[0].devices[0].points[0].scale == 0.1
 
 
@@ -297,7 +298,7 @@ def test_two_products_describing_one_model_is_fatal(monkeypatch):
 
     with pytest.raises(SystemExit) as exc:
         inventory.load_device_types(["alpha", "beta"])
-    assert "iDP-100" in str(exc.value)
+    assert "BENCH-1" in str(exc.value)
 
 
 def test_a_product_with_no_catalogue_is_not_a_problem(monkeypatch):
@@ -330,12 +331,18 @@ def test_reading_the_device_list_does_not_load_a_web_framework():
     import subprocess
     import sys
 
+    # The self-check is that a PRODUCT PACKAGE was imported, not that it
+    # yielded a register map. Products legitimately carry none - every
+    # one in this repository does today - and asserting on the map would
+    # make this test start passing by not running.
     probe = (
         "import sys;"
         "import jetpace_core.inventory as i, jetpace_core.selection as s;"
-        "t = i.load_device_types(s.KNOWN);"
-        "assert t, 'no register maps found at all - probe is not proving "
-        "anything';"
+        "i.load_device_types(s.KNOWN);"
+        "loaded = [m for m in sys.modules if m.startswith('jetpace_') "
+        "          and not m.startswith('jetpace_core')];"
+        "assert loaded, 'no product package was imported - probe is not "
+        "proving anything';"
         "bad = [m for m in ('fastapi', 'jinja2', 'starlette', 'uvicorn') "
         "      if m in sys.modules];"
         "print(','.join(bad))"

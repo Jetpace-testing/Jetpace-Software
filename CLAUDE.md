@@ -17,10 +17,16 @@ it.
 ## What this is
 
 Jetpace Software: one Python platform carrying two products — energy management
-for 400+ Modbus meters, and environmental monitoring for cleanrooms and
-differential pressure. Software only; the customer supplies the PC, the
-instruments and the converters. One install per customer on their own Windows
-machine.
+for 400+ Modbus meters, and environmental monitoring for cleanrooms. Software
+only; the customer supplies the PC, the instruments and the converters. One
+install per customer on their own Windows machine.
+
+**Neither product currently carries an instrument.** `jetpace_environment` held
+a differential pressure transmitter and the pages built around a pressure
+cascade; all of it was removed on 17 October 2026, because the first real site
+monitors temperature and relative humidity. The seam is intact and the
+commissioning form is built — what is missing is a register map. See the
+package docstring.
 
 Three workspace packages: `jetpace-core` is the platform and the UI shell,
 `jetpace-energy` and `jetpace-environment` are the products. **Core must never
@@ -37,7 +43,7 @@ complete domain, RTD the more complete platform.
 ## Commands
 
 ```bash
-uv run pytest -q                                  # 427 tests; needs nothing running
+uv run pytest -q                                  # 753 tests; needs nothing running
 uv run python scripts/run_web.py                  # dashboard on 127.0.0.1:1885
 python scripts/register_service.py --status        # the PostgreSQL service
 ```
@@ -64,11 +70,15 @@ Full detail and rationale in [architecture.md](architecture.md) §7.
 - Billing: the **last** reading closes a period; counters never run backwards; a
   blank always carries a status; never substitute a plausible guess.
 - `reading` and the audit log are **append-only** for the application role.
-- Modbus writes are disabled **at build time**, not by configuration.
-- `jetpace_environment.registers.NEVER_WRITE` must never be written — it costs a
-  site visit.
+- Modbus writes are disabled **at build time**, not by configuration. An
+  instrument's slave address and baud rate are writable registers, and a device
+  knocked off the bus from a browser is a site visit.
 - Signed values are two's complement. Wire address = datasheet number − 40001.
-- Register maps stay pinned to datasheets by tests.
+- A register map lives in the product package that sells the instrument, never
+  in core, and is pinned to its datasheet by a test in that package.
+- A point's `scale` is checked against a real instrument before a site goes
+  live. Many transmitters report tenths; read as whole units, every reading and
+  every report is out by ten with nothing on screen to say so.
 - Every table carries `tenant_id` and every query filters on it.
 - Every component must permit commercial redistribution.
 

@@ -2,10 +2,10 @@
 How a device model is described, for any instrument on any bus.
 
 The scaffolding half of what used to be `registers.py`: that file held
-both this and the iDP-100 differential pressure map, and the map has gone
-to packages/environment where the product that sells it lives. What stays
-here is the part that is true of a Modbus device regardless of what it
-measures.
+both this and one product's register map, and a map belongs to the
+package that sells the instrument. What stays here is the part that is
+true of a Modbus device regardless of what it measures - which is why
+this survived the removal of the only instrument the repository had.
 
 Four things, in two layers. `wire_address`, `Register` and `DeviceModel`
 describe a transcribed datasheet - what an instrument has. `Point` and
@@ -87,9 +87,10 @@ class DeviceModel:
 # it is a counter - and which parameter the operator's set points apply to.
 #
 # Those two things are deliberately separate. A datasheet is a fact about
-# an instrument and a new revision is a new DeviceModel, never an edit; the
-# decision to store DP_PV as the parameter `dp` and to put limits on it is
-# a product decision that can change without the datasheet changing.
+# an instrument and a new revision is a new DeviceModel, never an edit;
+# the decision to store a given register as a named parameter, in a given
+# unit, and to put set points on that one rather than another, is a
+# product decision that can change without the datasheet changing.
 #
 # This lives in core because it is true of any Modbus device, and is
 # contributed BY a product through `web.products.Product.device_types`, so
@@ -148,10 +149,11 @@ class Point:
     aggregation: str = "instantaneous"
     decimals: int = 2
     # Overrides the model's own scaling for this site. 1.0 means the raw
-    # decoded value is the value, which is the honest default: environment
-    # debt #6 is that DP_PV's scaling is unconfirmed against a real
-    # instrument, and inventing a factor here would be the way that
-    # becomes permanent.
+    # decoded value is the value, which is the honest default - and the
+    # number to check against a real instrument before a site goes live.
+    # Many transmitters report tenths; read as whole units, every reading,
+    # trend and report is out by a factor of ten, consistently, with
+    # nothing on screen to suggest it.
     scale: float = 1.0
 
     def __post_init__(self) -> None:
@@ -194,9 +196,10 @@ class DeviceType:
     # that matches the devices already there is worth a great deal when
     # somebody is commissioning the fourth of thirty.
     #
-    # Here rather than derived from the model code, because "iDP-100" ->
-    # "DP" needs a rule about leading lowercase letters that would be
-    # wrong for the next instrument.
+    # Here rather than derived from the model code, because deriving a
+    # prefix from a vendor's model string needs a rule about leading
+    # lowercase letters, hyphens and digits that is wrong for the next
+    # instrument.
     code_prefix: str = ""
     # device.scan_class. 'critical' for an instrument whose reading is
     # the product's reason for existing, which is a product's call: a

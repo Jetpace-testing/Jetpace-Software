@@ -14,7 +14,8 @@ is why it is here rather than in `web/products.py` where it started.
 
 Only the first is a web concern. `web/products.py` imports FastAPI and
 Jinja at module scope, so asking it would mean the poller loading a web
-framework to find out where DP_PV lives - and would invert the dependency
+framework to find out where a register lives - and would invert the
+dependency
 direction architecture.md §3 sets out, where products and the web layer
 sit above acquisition rather than beside it. `web/products.py` imports
 these three names and re-exports them, so it stays the single place a

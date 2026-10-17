@@ -16,9 +16,9 @@ Two halves of one question, which is why they are in one module.
   somebody can edit with an UPDATE statement is a register map that can
   silently stop matching the document it was transcribed from.
 
-So a device row says `model = 'iDP-100'` and the map says DP_PV is at
-datasheet 40001; the database contributes which parameters are on and the
-site's own scaling, and the two are composed here.
+So a device row names a model and the product's map says where that
+model's registers are; the database contributes which parameters are on
+and the site's own scaling, and the two are composed here.
 
 WHAT HAPPENS TO A DEVICE WHOSE MODEL HAS NO MAP. It cannot be polled -
 there is nothing to say which register to read. It is counted and named

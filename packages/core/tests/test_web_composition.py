@@ -175,8 +175,12 @@ def test_no_template_basename_is_defined_twice_across_the_search_path():
     """
     roots = [CORE_TEMPLATES]
     for slug in P.KNOWN:
-        if P.importable(slug):
-            roots.append(P.load([slug])[0].templates)
+        if not P.importable(slug):
+            continue
+        # A product with no pages has no template directory to clash.
+        directory = P.load([slug])[0].templates
+        if directory is not None:
+            roots.append(directory)
 
     seen: dict[str, Path] = {}
     clashes = []

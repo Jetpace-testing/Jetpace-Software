@@ -2,7 +2,7 @@
 Run the supervisor over this working tree.
 
     uv run python scripts/run_supervisor.py
-    uv run python scripts/run_supervisor.py --with-sim
+    uv run python scripts/run_supervisor.py
     uv run python scripts/run_supervisor.py --root C:\\Jetpace
 
 In development the children are the same scripts you would otherwise start
@@ -34,9 +34,6 @@ def main() -> int:
     ap.add_argument("--root", type=Path, default=ROOT,
                     help="install root; where update/ and version.json live")
     ap.add_argument("--port", type=int, default=1885)
-    ap.add_argument("--with-sim", action="store_true",
-                    help="also run the device simulator")
-    ap.add_argument("--sim-units", type=int, default=3)
     ap.add_argument("--config", type=Path, default=ROOT / "supervisor.json",
                     help="use this config file if it exists")
     ap.add_argument("--no-config", action="store_true",
@@ -52,15 +49,6 @@ def main() -> int:
 
     py = sys.executable
     children: list[ChildSpec] = []
-
-    if args.with_sim:
-        # Not required: the simulator is a development convenience, and its
-        # death must not fail a release's health gate.
-        children.append(ChildSpec(
-            name="simulator",
-            args=[py, str(ROOT / "tools" / "sim" / "idp100_sim.py"),
-                  "--units", str(args.sim_units)],
-            required=False))
 
     children += [
         ChildSpec("poller", [py, str(ROOT / "scripts" / "run_poller.py"),

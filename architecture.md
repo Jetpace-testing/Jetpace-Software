@@ -72,7 +72,7 @@ automatically after three failed starts. What is missing is only the button —
   app/                 the frozen application; jetpace.exe + _internal/   REPLACEABLE
   version.json         what app/ currently is                             REPLACEABLE
   supervisor/          the frozen supervisor, its own bundle
-  config/              prototype.toml
+  config/              products.toml
   migrations/          numbered SQL, run at install time
   data/                secrets, the database, logs           (.local/ in a checkout)
   update/              staging, backup, failed, downloads
@@ -135,14 +135,14 @@ Jetpace Software/
 └── packages/
     ├── core/                 jetpace-core        the platform and the UI shell
     ├── energy/               jetpace-energy      tariffs, billing, demand
-    └── environment/          jetpace-environment ISO 14644, DP cascade
+    └── environment/          jetpace-environment ISO 14644, Part 11
 ```
 
 | Package | Depends on core as | Contains |
 |---|---|---|
 | `core` | — | devices, drivers, historian, alarms, identity, audit, reports, updater, UI shell |
 | `energy` | workspace | tariffs, billing, demand, EnPI |
-| `environment` | workspace | ISO 14644, DP cascade, Part 11 |
+| `environment` | workspace | ISO 14644, Part 11. Empty today — debt #6 |
 
 All three exist. Each product depends on core; neither depends on the other, and
 core depends on neither — enforced by `test_core_names_no_product.py`, which
@@ -196,10 +196,12 @@ web/products.py    what a product may add.   imports: fastapi
 ```
 
 `registers.py` was here, holding both the generic `Register`/`DeviceModel`
-scaffolding and the iDP-100 differential pressure map. The map is one product's
-and moved to `jetpace_environment.registers`; the scaffolding is the platform's,
-because "wire address = datasheet number − 40001" is true of any Modbus device
-and is an invariant in CLAUDE.md, so it stayed as `devices.py`.
+scaffolding and one product's register map. A map belongs to the package that
+sells the instrument; the scaffolding is the platform's, because "wire address =
+datasheet number − 40001" is true of any Modbus device and is an invariant in
+CLAUDE.md, so it stayed as `devices.py`. That division is why the removal of the
+only instrument in the repository (§9, debt #6) touched one package and left the
+commissioning path standing.
 
 **Dependencies point one way: downward in that list.** The rules that matter:
 
@@ -492,12 +494,13 @@ site does not distinguish a broken release from a dead gateway.
 
 ## 6. Configuration
 
-Today the device list lives in `config/prototype.toml`. **It belongs in the
-database**, and moving it is on the list — with a dry-run diff, because silently
-reconciling a device list against live hardware is how a commissioned device gets
-orphaned.
+The device list lives **in the database** and is filled in from the
+commissioning form; `config/` now holds only `products.toml`, which says which
+products this install serves. `jetpace poller --devices file --config <path>`
+still reads a gateway sheet for anybody who keeps one, but there is no default
+sheet and nothing ships one.
 
-The rule meanwhile:
+The rule:
 
 | In a file | In the database |
 |---|---|
@@ -548,16 +551,17 @@ new reports must match to the paisa, including blanks and statuses.
   are revoked — a §11 requirement that cannot be added later by policy.
 - **The audit log is append-only.** Nobody gets update or delete rights,
   administrators included.
-- **Modbus writes are disabled at build time**, not by configuration.
-- **`registers.NEVER_WRITE = {40021, 40022, 40031, 40032, 40034}`** — slave
-  address, baud rate, save, auto-zero. Writing any of these to a commissioned
-  device loses contact with it, and recovery is a site visit with a laptop and a
-  screwdriver.
+- **Modbus writes are disabled at build time**, not by configuration. There is
+  no write function in `modbus_client.py` to call.
+- **Some registers must never be written** — slave address, baud rate, save,
+  auto-zero. Writing any of these to a commissioned device loses contact with
+  it, and recovery is a site visit with a laptop and a screwdriver. A product's
+  register map marks them; the build-time rule above is what enforces it.
 
 ### Decoding
 
-- **Signed values are two's complement.** A reversed pressure cascade sends 65531
-  for −5 Pa. Reading that as unsigned is not a rounding error, it is a wrong sign
+- **Signed values are two's complement.** An instrument reporting −5 sends
+  65531. Reading that as unsigned is not a rounding error, it is a wrong sign
   on a regulated measurement.
 - **Floats are IEEE-754 big-endian across two 16-bit registers.**
 - **Datasheet numbers are not wire addresses**: wire = datasheet − 40001.
@@ -573,11 +577,10 @@ only as an internal tool. Use Valkey, not Redis.
 ## 8. Running and testing
 
 ```bash
-uv run pytest -q                                  # 70 tests, no network, no database
+uv run pytest -q                                  # 753 tests, no network, no database
 python scripts/setup_postgres.py --start          # or the service, if registered
 python scripts/setup_mosquitto.py --start
-python tools/sim/idp100_sim.py --units 3
-uv run python scripts/run_poller.py --sink mqtt
+uv run python scripts/run_poller.py --sink mqtt   # polls what is commissioned
 uv run python scripts/run_ingest.py
 uv run python scripts/run_web.py                  # http://127.0.0.1:1885
 ```
@@ -600,12 +603,12 @@ Honest register of where the repo and the specification disagree.
 
 | # | Issue | Why it matters |
 |---|---|---|
-| 1 | ~~Product logic in core~~ — **fixed, and now enforced.** `packages/energy` and `packages/environment` are workspace members. `dp`, `kwh_import`, both product templates, the cleanroom CSS and the iDP-100 map have all left core | `test_core_names_no_product.py` scans core's source for the parameter keys, for an import of either product, for a product selector in `app.css` and for a product link in `_base.html`. The two exceptions it deliberately does not cover are debt #12 and #3, both recorded |
+| 1 | ~~Product logic in core~~ — **fixed, and now enforced.** `packages/energy` and `packages/environment` are workspace members. `dp`, `kwh_import`, both product templates, the cleanroom CSS and the register map have all left core | `test_core_names_no_product.py` scans core's source for the parameter keys, for an import of either product, for a product selector in `app.css` and for a product link in `_base.html`. The two exceptions it deliberately does not cover are debt #12 and #3, both recorded |
 | 2 | **No declared `Sink` Protocol.** `sinks.py` says "two implementations" and there are three; the shape is duck-typed and unenforced | The seam is the most load-bearing boundary in the system and nothing checks it. A `typing.Protocol` plus a conformance test would |
-| 3 | ~~Device list in `config/prototype.toml`~~ — **fixed.** `jetpace poller --devices db` reads the gateway, device and device_parameter tables and re-reads them every ten seconds; supervisor.json runs it that way. The file is still the CLI default and still what `seed_prototype.py` reads | The dry-run diff this entry asked for turned out not to be the shape of the problem: nothing reconciles a file against the database any more, because the database IS the list. What replaced it is `Plan.unreadable`, which names every device no loaded product has a register map for rather than quietly not polling it |
+| 3 | ~~Device list in `config/prototype.toml`~~ — **fixed.** `jetpace poller --devices db` reads the gateway, device and device_parameter tables and re-reads them every ten seconds; supervisor.json runs it that way. The file is gone, with the seed scripts that read it, and `db` is now the CLI default | The dry-run diff this entry asked for turned out not to be the shape of the problem: nothing reconciles a file against the database any more, because the database IS the list. What replaced it is `Plan.unreadable`, which names every device no loaded product has a register map for rather than quietly not polling it |
 | 4 | Mosquitto is not a Windows service | Dies on reboot; the same treatment as PostgreSQL would fix it |
 | 5 | OTA cannot replace the supervisor itself | A running executable holds its own file open, so `REPLACEABLE` is `app/` + `version.json` only. Supervisor changes go out through the installer — which is why it must stay small and stay still |
-| 6 | `DP_PV` scaling unconfirmed against a real device | A scale error reaches a batch record |
+| 6 | **No instrument in the repository at all.** The differential pressure transmitter, its register map, the pages built on a pressure cascade and the simulator that spoke its registers were removed on 17 October 2026, on the grounds that the first real site monitors temperature and humidity and a half-rewritten pressure product is worse than an empty one. `jetpace_environment` is an empty but valid product: core finds it by slug, it contributes no types and no pages, and it gets no nav link | Nothing can be commissioned until a register map lands, and nothing can be exercised end to end without hardware. What this did NOT cost is the seam: the commissioning form, the probe, the live reload, the audit trail and the device pages are all platform and all still tested, against a fabricated instrument in `packages/core/tests/bench.py`. The old entry here was that `DP_PV`'s scaling was unconfirmed against a real device; the lesson outlived the instrument and is now an invariant in CLAUDE.md — confirm a point's `scale` on the bench, because a factor of ten is invisible on screen |
 | 7 | Site installer runbook §2 claims Mosquitto binaries are "extracted from the Windows build" | Impossible — all published builds are installers. The runbook is wrong |
 | 8 | ~~`energy` and `environment` packages do not exist~~ — **fixed.** Both are workspace members with their own queries, routes, templates and tests | What remains is not the packaging but the version isolation: debt #11 |
 | 9 | **`zipfile.extractall` must never be used on a release** | It sanitises silently — strips leading slashes, drops `..` — and carries on. `archive.py` refuses instead, because such a name means the release was built wrong or built by someone else. Enforced by 53 tests |

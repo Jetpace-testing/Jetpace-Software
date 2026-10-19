@@ -1,0 +1,47 @@
+{# The parts of the add-device form that belong to the chosen type.
+
+   Swapped into #limit-fields when the dropdown changes, carrying two
+   out-of-band swaps for the fields that sit elsewhere in the form: the
+   port and the suggested code. An out-of-band swap rather than a second
+   request, because all three answers come from one type and splitting
+   them would let the form show one type's port beside another's fields.
+
+   A type whose points carry no specification renders an empty fieldset
+   rather than nothing at all: HTMX needs the target to exist for the
+   next swap, and two bare boxes with no unit beside them is what this
+   replaced. #}
+
+<fieldset id="limit-fields">
+  {% if device_type.limit_points() %}
+    <legend>Set points <em>optional</em></legend>
+    {% for point in device_type.limit_points() %}
+      <div class="field-row">
+        <label class="field">
+          <span>{{ point.label }} LSP
+            <small class="unit">{{ point.unit }}</small></span>
+          <input name="low_{{ point.param }}" type="text"
+                 inputmode="decimal" autocomplete="off">
+        </label>
+        <label class="field">
+          <span>{{ point.label }} HSP
+            <small class="unit">{{ point.unit }}</small></span>
+          <input name="high_{{ point.param }}" type="text"
+                 inputmode="decimal" autocomplete="off">
+        </label>
+      </div>
+    {% endfor %}
+  {% endif %}
+</fieldset>
+
+{# The two fields that live in other fieldsets, replaced where they
+   stand. Only when this is a RESPONSE: included in the form itself they
+   would be a second input with the same name, and a form posting `port`
+   twice is a form whose value depends on which one the browser sends. #}
+{% if oob %}
+  <input id="field-port" name="port" type="number" min="1" max="65535"
+         value="{{ default_port }}" required hx-swap-oob="true">
+
+  <input id="field-code" name="code" type="text" required maxlength="31"
+         value="{{ suggested_code }}" autocomplete="off"
+         pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,30}" hx-swap-oob="true">
+{% endif %}

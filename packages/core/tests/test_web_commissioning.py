@@ -21,6 +21,7 @@ from bench import BENCH, bench_product
 from jetpace_core.web import products as P
 from jetpace_core.web import queries as q
 from jetpace_core.web import writes as w
+import jetpace_core.web.app as A_MODULE
 from jetpace_core.web.app import HERE, create_app
 
 DSN = "postgresql://unused:unused@127.0.0.1:1/unused"
@@ -798,3 +799,88 @@ def test_an_install_with_no_maps_still_says_what_is_coming(monkeypatch):
     assert "SOON-1" in modal and "Not here yet" in modal
     # Still no form: there is nothing to commission against.
     assert 'id="add-device-form"' not in modal
+
+
+# --- the form follows the type that was chosen ----------------------------
+
+def test_choosing_a_type_brings_its_own_set_point_fields(monkeypatch):
+    """
+    Until this route existed, the fields were computed once from the
+    FIRST type in the catalogue and nothing updated them. With one type
+    that was invisible; with per-parameter set points it would be the
+    wrong parameters entirely.
+    """
+    body = pair_client(monkeypatch).get(
+        "/partials/device-type?model=BENCH-1").text
+    assert 'name="low_pv"' in body and 'name="high_pv"' in body
+    assert "low_alpha" not in body
+
+
+def test_choosing_a_type_brings_its_own_port_and_code(monkeypatch):
+    """
+    Both travel as out-of-band swaps, because they sit in other
+    fieldsets - and both come from the same request as the fields, so
+    the form can never show one type's port beside another's parameters.
+    """
+    body = pair_client(monkeypatch).get(
+        "/partials/device-type?model=BENCH-2").text
+    assert 'id="field-port"' in body and 'value="1502"' in body
+    assert 'id="field-code"' in body and "BP-004" in body
+    assert body.count('hx-swap-oob="true"') == 2
+
+
+def test_the_type_fields_are_not_duplicated_into_the_form_itself(
+        monkeypatch):
+    """
+    The same template renders in the form and in the response, so the
+    two cannot drift. The out-of-band inputs must appear only in the
+    response: in the form they would be a second input named `port`,
+    and which one the browser posts is not something to leave to chance.
+    """
+    body = pair_client(monkeypatch).get("/").text
+    modal = body.split('id="modal-add-device"', 1)[1]
+    assert modal.count('name="port"') == 1
+    assert modal.count('name="code"') == 1
+    assert "hx-swap-oob" not in modal
+
+
+def test_an_unknown_type_on_the_partial_is_refused_not_substituted(
+        monkeypatch):
+    body = pair_client(monkeypatch).get(
+        "/partials/device-type?model=NOPE").text
+    assert "not a device type this install carries" in body
+
+
+def test_reopening_the_form_asks_again_for_the_selected_types_fields():
+    """
+    `form.reset()` returns the dropdown to its first option and leaves
+    whatever fields were last swapped in - so without this, reopening
+    shows type A selected beside type B's set points.
+    """
+    index = (HERE / "templates" / "index.html").read_text(encoding="utf-8")
+    show = index.split("form.reset()", 1)[1][:600]
+    assert 'trigger(picker, "change")' in show
+
+
+def test_the_type_partial_is_behind_the_same_permission_as_adding(
+        monkeypatch):
+    """It names the instruments this install carries, which is not public."""
+    source = Path(A_MODULE.__file__).read_text(encoding="utf-8")
+    body = source.split("def partial_device_type(", 1)[1][:500]
+    assert "permissions.DEVICE_ADD" in body
+
+
+def test_two_type_changes_cannot_land_out_of_order():
+    """
+    FOUND BY CHANGING THE TYPE TWICE QUICKLY in a browser. Both requests
+    went out, the first answer landed last, and the form ended up
+    showing one instrument selected beside another's set point fields,
+    its port and its suggested code - the exact fault this partial
+    exists to prevent, arriving by a different route.
+
+    `abort` and not `replace`: replace swaps a QUEUED request and leaves
+    the one already in flight to land, which is what was happening.
+    """
+    modal = (HERE / "templates" / "_modal.html").read_text(encoding="utf-8")
+    picker = modal.split("<select", 1)[1].split(">", 1)[0]
+    assert 'hx-sync="this:abort"' in picker

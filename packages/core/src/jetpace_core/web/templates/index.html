@@ -445,7 +445,16 @@ ready(function () {
     });
     // And bring the form back, if a successful commission put it away.
     var form = el.querySelector("#add-device-form");
-    if (form) { form.hidden = false; form.reset(); }
+    if (form) {
+      form.hidden = false;
+      form.reset();
+      // reset() returns the TYPE DROPDOWN to its first option while
+      // leaving whatever set point fields were last swapped in, so
+      // reopening the form would show one type selected beside another
+      // type's fields. Ask for the selected type's fields again.
+      var picker = form.querySelector("[name=model]");
+      if (picker && window.htmx) { window.htmx.trigger(picker, "change"); }
+    }
     el.hidden = false;
     open = el;
     // The first real field, not the close button: this form is filled in

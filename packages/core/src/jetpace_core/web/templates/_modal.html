@@ -84,7 +84,8 @@
           </label>
           <label class="field field-narrow">
             <span>Port</span>
-            <input name="port" type="number" min="1" max="65535"
+            <input id="field-port" name="port" type="number"
+                   min="1" max="65535"
                    value="{{ default_port }}" required>
           </label>
           <label class="field field-narrow">
@@ -106,7 +107,20 @@
           <label class="field field-grow">
             <span>Device type</span>
             <span class="select-wrap">
-              <select name="model" required>
+              {# hx-sync, because two of these can be in flight at once.
+                 Found by changing the type twice quickly: the first
+                 response landed last and the form ended up showing one
+                 instrument selected beside another's set point fields,
+                 its port and its suggested code. `abort` cancels the
+                 request in flight, so what is on screen is the answer to
+                 the question asked last. `replace` was tried first and
+                 does NOT do this - it replaces a queued request and
+                 leaves the one already in flight to land. #}
+              <select name="model" required
+                      hx-get="/partials/device-type"
+                      hx-target="#limit-fields" hx-swap="outerHTML"
+                      hx-sync="this:abort"
+                      hx-trigger="change">
                 {% for code, entry in device_types.items() %}
                   <option value="{{ code }}">{{ entry.title }}</option>
                 {% endfor %}
@@ -141,33 +155,16 @@
       </fieldset>
 
       {# A pair per parameter that carries a specification, in the same
-         order as the device page lays out its reading tiles. A type
-         whose points carry none renders no fieldset at all, rather than
-         two boxes with no unit beside them.
+         order as the device page lays out its reading tiles. The field
+         NAMES carry the parameter - low_temp, high_rh - so a rejection
+         can redden the box it is about.
 
-         The field NAMES carry the parameter - low_temp, high_rh - so a
-         rejection can redden the box it is about. #}
-      {% if device_type and device_type.limit_points() %}
-        <fieldset id="limit-fields">
-          <legend>Set points <em>optional</em></legend>
-          {% for point in device_type.limit_points() %}
-            <div class="field-row">
-              <label class="field">
-                <span>{{ point.label }} LSP
-                  <small class="unit">{{ point.unit }}</small></span>
-                <input name="low_{{ point.param }}" type="text"
-                       inputmode="decimal" autocomplete="off">
-              </label>
-              <label class="field">
-                <span>{{ point.label }} HSP
-                  <small class="unit">{{ point.unit }}</small></span>
-                <input name="high_{{ point.param }}" type="text"
-                       inputmode="decimal" autocomplete="off">
-              </label>
-            </div>
-          {% endfor %}
-        </fieldset>
-      {% endif %}
+         The fieldset itself is always here, even when the type carries
+         no specification and it renders empty: it is what
+         /partials/device-type swaps when the dropdown changes, and HTMX
+         needs the target to exist. Same markup, in one include, so the
+         first render and every later one cannot drift. #}
+      {% include "_device_type.html" %}
 
       <div class="probe-row">
         <button type="button" class="ghost-button"

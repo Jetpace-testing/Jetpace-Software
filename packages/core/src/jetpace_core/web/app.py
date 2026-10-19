@@ -861,17 +861,49 @@ def create_app(dsn: str,
                 f"has {', '.join(sorted(catalogue))}.", "model")
         return entry[1]
 
-    # `/partials/device-type` stood here and rendered a note under the
-    # type dropdown saying which registers the chosen instrument would be
-    # read at, with their datasheet numbers. It went with the rest of the
-    # form's explanatory text.
+    # `/partials/device-type` stood here once rendering a note about
+    # which registers the chosen instrument would be read at. That note
+    # went with the rest of the form's explanatory text, and so did the
+    # route - but the route is back, with a different job, because the
+    # form now has FIELDS that depend on which type is selected and not
+    # just prose.
     #
-    # The fact it was making is not lost: a device's page shows its model,
-    # revision and the datasheet its register map is pinned to, which is
-    # where somebody checking a commissioned instrument actually looks.
-    # The route is gone rather than left unreachable, because a handler
-    # nothing calls is a handler nobody maintains and everybody still has
-    # to review.
+    # Three things on the form belong to the chosen type: the set point
+    # fields (one pair per parameter it carries a specification on, each
+    # labelled with that parameter's own unit), the default port, and the
+    # suggested device code. Until this route existed they were all
+    # computed once, from the FIRST type in the catalogue, and nothing
+    # updated them when the dropdown changed. With one type that was
+    # invisible; with two it was a wrong unit; with per-parameter set
+    # points it would be the wrong parameters entirely.
+    #
+    # A request rather than JavaScript because the code suggestion has to
+    # be read off the device table - "the lowest free RH-nnn" is not
+    # something a browser can work out.
+
+    @app.get("/partials/device-type", response_class=HTMLResponse)
+    def partial_device_type(request: Request, model: str | None = None):
+        """The parts of the form that belong to the selected device type."""
+        auth_routes.require(request, permissions.DEVICE_ADD)
+        try:
+            device_type = selected_type(model)
+        except writes.WriteRejected as exc:
+            return templates.TemplateResponse(
+                request, "_commissioned.html", {"rejected": exc})
+
+        with queries.connect(dsn) as conn:
+            suggested = writes.suggest_code(
+                conn, queries.tenant_id(conn), device_type.code_prefix)
+        return templates.TemplateResponse(request, "_device_type.html", {
+            "device_type": device_type,
+            "default_port": device_type.default_port,
+            "suggested_code": suggested,
+            # The port and the code live in other fieldsets, so they
+            # travel back as out-of-band swaps - but only in a response.
+            # Included in the form itself they would be a second input
+            # with the same name.
+            "oob": True,
+        })
 
     @app.post("/partials/probe", response_class=HTMLResponse)
     def partial_probe(request: Request,

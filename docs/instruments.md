@@ -121,8 +121,9 @@ Worth knowing before the next one, because the same questions will come up:
   record can say which the instrument was in.
 - **Scale may not be a property of the model at all.** `Decimal_Point_Set` is
   writable per channel, so two identical instruments can report the same
-  quantity with different decimal places. It is read at commissioning and
-  stored against the device.
+  quantity with different decimal places. The Cleanroom Display is declared at
+  0.1 — its registers report tenths — and reading the register at
+  commissioning is what turns that default into a fact about each unit.
 - **A written value may not survive a power cycle.** This instrument needs
   1221 committed to `SAVE_EN`, so "write, read back, record" is not enough on
   its own — the read-back would confirm a value that will be forgotten.

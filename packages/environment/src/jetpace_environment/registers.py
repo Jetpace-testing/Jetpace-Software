@@ -32,11 +32,15 @@ that cannot is signed anyway unless it is a code, a count or a bitfield.
 A temperature below zero read as unsigned comes back as 65531, and
 nothing downstream would question it.
 
-SCALE IS NOT HERE, DELIBERATELY. `Decimal_Point_Set[ch]` at 40022-40024
-is writable per channel, so how many decimal places a reading carries is
-a property of how each instrument was configured, not of the model. It
-is read at commissioning and stored against the device. See
-`jetpace_core.web.app`'s probe and `device_parameter.scale`.
+SCALE IS NOT HERE, DELIBERATELY - it belongs to the `Point`, which is the
+product's decision about a register rather than part of the datasheet.
+These registers report TENTHS: 235 is 23.5. See __init__.py.
+
+And it is a default rather than a fact, because `Decimal_Point_Set[ch]`
+at 40022-40024 is writable per channel: how many decimal places a
+reading carries is a property of how each instrument was configured. The
+register is readable here so commissioning can check it against the
+declared figure and store the truth per device.
 """
 
 from __future__ import annotations

@@ -262,6 +262,36 @@ def test_the_readings_are_signed():
         assert BY_KEY[key].kind == "s16", key
 
 
+def test_every_reading_is_scaled_down_by_ten():
+    """
+    THE NUMBER THAT IS INVISIBLE WHEN IT IS WRONG. The registers report
+    tenths: 235 is 23.5 degrees, 482 is 48.2 %RH, -125 is -12.5 Pa. The
+    datasheet has no scale column and the figure came from the person
+    who owns the instrument.
+
+    Read as whole units, every reading, every trend and every report
+    would be out by a factor of ten, consistently, with nothing on
+    screen to suggest it - and `reading` is append-only, so the rows
+    could not be corrected afterwards.
+    """
+    for t in DEVICE_TYPES:
+        for point in t.points:
+            assert point.scale == 0.1, f"{t.code} {point.param}"
+            assert point.decimals == 1, f"{t.code} {point.param}"
+
+
+def test_the_declared_scale_can_still_be_overridden_per_instrument():
+    """
+    Decimal_Point_Set is writable per channel, so a unit configured
+    differently reports whole units while the type says tenths. The
+    register is readable for exactly that reason; what the poller
+    actually uses is `device_parameter.scale` when a site has one.
+    """
+    assert set(DECIMALS_REGISTER) == {"temp", "rh", "dp"}
+    for key in DECIMALS_REGISTER.values():
+        assert key in BY_KEY
+
+
 def test_a_cleanroom_reading_is_critical_and_not_a_trend():
     """A room is qualified on these. That is the product's call."""
     for t in DEVICE_TYPES:

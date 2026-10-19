@@ -60,22 +60,31 @@ __all__ = ["DEVICE_TYPES", "PLANNED"]
 # not say; the person who owns the instrument does, and it is written
 # down in registers.py beside the addresses it decides.
 #
-# SCALE IS 1.0 HERE AND IS NOT THE SCALE USED. How many decimal places
-# a channel reports is configurable per instrument, at 40022-40024, so
-# it is read at commissioning and stored against the device in
-# `device_parameter.scale`, which overrides this. A figure invented
-# here would be the one that silently multiplies a room's history by
-# ten on the one unit somebody had configured differently.
+# SCALE IS 0.1: THE REGISTERS REPORT TENTHS. 235 is 23.5 degrees, 482
+# is 48.2 %RH, -125 is -12.5 Pa. Confirmed by the person who owns the
+# instrument on 19 October 2026 - the datasheet has no scale column, and
+# this is the number that would otherwise multiply a room's entire
+# history by ten with nothing on screen to suggest it.
+#
+# It is a DECLARED DEFAULT and not the last word. Decimal_Point_Set at
+# 40022-40024 is writable per channel, so a unit configured differently
+# would report whole units while this says tenths. Reading it at
+# commissioning and storing the result per device in
+# `device_parameter.scale` - which the poller already prefers over this
+# figure - is what turns the default into a fact about each instrument.
 # ---------------------------------------------------------------------------
 
 FAMILY = "Cleanroom Display"
 
 TEMPERATURE = Point("temp", "temp_pv", "Temperature", "°C",
-                    aggregation="instantaneous", decimals=1, limited=True)
+                    aggregation="instantaneous", decimals=1, scale=0.1,
+                    limited=True)
 HUMIDITY = Point("rh", "rh_pv", "Relative humidity", "%RH",
-                 aggregation="instantaneous", decimals=1, limited=True)
+                 aggregation="instantaneous", decimals=1, scale=0.1,
+                 limited=True)
 PRESSURE = Point("dp", "dp_pv", "Differential pressure", "Pa",
-                 aggregation="instantaneous", decimals=1, limited=True)
+                 aggregation="instantaneous", decimals=1, scale=0.1,
+                 limited=True)
 
 
 def _variant(code: str, label: str, kind: str, points) -> DeviceType:

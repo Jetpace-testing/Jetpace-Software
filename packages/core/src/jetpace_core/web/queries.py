@@ -117,6 +117,11 @@ SELECT d.code,
        p.aggregation,
        l.value,
        l.ts,
+       -- The poller's own verdict on the sample. It was never selected
+       -- here, so the overview's "Suspect" badge could not fire once:
+       -- the template filtered on an attribute no row carried. The
+       -- state the table now shows is computed from this.
+       l.quality,
        l.ts > now() - {OFFLINE_AFTER}            AS online,
        -- GREATEST(0, ...) because TWO clocks are involved: the poller
        -- timestamps the reading in Python, now() is the database's
@@ -153,7 +158,7 @@ JOIN   gateway g           ON g.id = d.gateway_id
 LEFT   JOIN device_parameter dp ON dp.device_id = d.id AND dp.enabled
 LEFT   JOIN parameter p         ON p.id = dp.param
 LEFT   JOIN LATERAL (
-         SELECT r.value, r.ts
+         SELECT r.value, r.ts, r.quality
          FROM   reading r
          WHERE  r.device_id = d.id AND r.param = p.id
          ORDER  BY r.ts DESC
@@ -437,7 +442,7 @@ FROM   seen
 
 
 # ---------------------------------------------------------------------------
-# where the devices are, and how they are
+# where the devices are
 #
 # The design draws a floor plan: five named zones at hand-chosen
 # coordinates with device dots scattered over them. There is no room,
@@ -446,36 +451,15 @@ FROM   seen
 # invented, and an invented floor plan shown to a customer is a promise
 # that the software knows where their instruments are.
 #
-# A gateway IS the real grouping: it is one serial bus or one converter,
-# which in practice is one area of the plant. So the panel answers the
-# design's question - which parts of the facility are healthy - from the
-# grouping that exists, and lays the zones out rather than positioning
-# them.
+# A GATEWAY IS THE REAL GROUPING: one serial bus or one converter,
+# which in practice is one area of the plant. That grouping used to
+# drive a Facility Overview panel beside the device table, with its own
+# query (FACILITY) and its own layout of zones. Both are gone. The
+# panel was removed so the table could have the full width, and the
+# grouping moved into the table itself, which heads each group with the
+# converter's location and lists the rooms under it. One grouping, on
+# the screen people actually read, built from `LIVE` above.
 # ---------------------------------------------------------------------------
-
-FACILITY = f"""
-SELECT g.label                                   AS gateway,
-       g.host,
-       g.port,
-       g.enabled,
-       s.name                                    AS site,
-       d.code,
-       d.name,
-       l.ts                                      AS newest,
-       l.ts > now() - {OFFLINE_AFTER}            AS online,
-       GREATEST(0, EXTRACT(EPOCH FROM (now() - l.ts)))::int AS age_s
-FROM   device d
-JOIN   gateway g ON g.id = d.gateway_id
-JOIN   site s    ON s.id = d.site_id
-LEFT   JOIN LATERAL (
-         SELECT r.ts FROM reading r
-         WHERE  r.device_id = d.id
-         ORDER  BY r.ts DESC LIMIT 1
-       ) l ON true
-WHERE  d.retired_at IS NULL
-ORDER  BY g.label, d.code
-"""
-
 
 # ---------------------------------------------------------------------------
 # exceptions - what the shell can honestly say has gone wrong
@@ -610,12 +594,6 @@ def distribution(conn: psycopg.Connection) -> dict:
     with conn.cursor() as cur:
         cur.execute(DISTRIBUTION)
         return cur.fetchone() or {}
-
-
-def facility(conn: psycopg.Connection) -> list[dict]:
-    with conn.cursor() as cur:
-        cur.execute(FACILITY)
-        return cur.fetchall()
 
 
 def silence(conn: psycopg.Connection, limit: int = 12) -> list[dict]:

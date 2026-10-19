@@ -69,7 +69,6 @@ def client_stubs(monkeypatch):
     monkeypatch.setattr(q, "distribution", lambda conn: {
         "devices": 0, "online": 0, "silent": 0, "never_seen": 0,
         "gateways": 0, "gateways_live": 0})
-    monkeypatch.setattr(q, "facility", lambda conn: [])
     monkeypatch.setattr(q, "silence", lambda conn, limit=12: [])
     monkeypatch.setattr(q, "suspect", lambda conn, hours=6, limit=12: [])
     monkeypatch.setattr(q, "device", lambda conn, code: None)
@@ -77,6 +76,7 @@ def client_stubs(monkeypatch):
     monkeypatch.setattr(q, "device_shape", lambda conn, code: {})
     monkeypatch.setattr(q, "tenant_id", lambda conn: 1)
     monkeypatch.setattr(q, "device_limits", lambda conn, code: {})
+    monkeypatch.setattr(q, "limits", lambda conn: {})
     monkeypatch.setattr(w, "suggest_code",
                         lambda conn, tenant_id, prefix: f"{prefix}-004")
 

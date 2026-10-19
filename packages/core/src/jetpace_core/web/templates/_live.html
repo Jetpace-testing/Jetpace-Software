@@ -50,119 +50,121 @@
      filter by - so neither is drawn rather than drawn dead. #}
 </div>
 
-<div class="table-scroll">
-  <table>
-    <thead>
-      <tr>
-        <th>Device</th>
-        <th>Location</th>
-        <th>Reading</th>
-        <th>Connectivity</th>
-        <th>Alarm</th>
-        <th>Last Update</th>
-      </tr>
-    </thead>
-    <tbody>
-      {# The design's table has a column per parameter - temperature,
-         humidity, differential pressure - because its sample data has
-         all three on every device. Real instruments do not: a pressure
-         transmitter reports pressure, a meter reports energy. So the
-         reading column is driven by the parameter each device actually
-         has, with its own unit and decimals, and a device with more
-         than one says so rather than inventing columns that would be
-         empty on every row.
+<div class="table-wrap">
+  {# ONE TABLE PER CONVERTER, headed by where it is.
 
-         ALARM is derived from what the system genuinely knows -
-         silence, and a substituted or suspect sample. It is not an
-         alarm engine; there is none. A real one is §10 work. #}
-      {% for d in devices %}
-        {% set first = d.points | first %}
-        {% set suspect = d.points | selectattr('quality') | list %}
-        <tr data-device="{{ d.code }}|{{ d.name }}|{{ d.gateway }}"
-            data-state="{{ 'online' if d.online else 'silent' }}">
-          <td>
-            <a class="device-link" href="/devices/{{ d.code }}">
-              <span class="device-mini">{{ ico.icon('device', 15) }}</span>
-              <span><strong>{{ d.code }}</strong><small>{{ d.name }}</small></span>
-            </a>
-          </td>
-          <td>
-            <span class="location-cell">{{ ico.icon('location', 14) }}{{ d.gateway }}</span>
-          </td>
-          <td>
-            {# `first` exists as soon as the device is CONFIGURED to read a
-                 parameter; its value is null until the device has actually
-                 sent one. Those are different states and the table shows
-                 both: a dash for "nothing yet", a number for a reading.
-                 Formatting a null here crashed the whole overview the
-                 first time a commissioned device had not answered. #}
-            {% if first and first.value is not none %}
-              {{ '{:,.{}f}'.format(first.value, first.decimals) }}
-              <span class="dim">{{ first.unit }}</span>
-              {% if d.points | length > 1 %}
-                <span class="dim">+{{ d.points | length - 1 }}</span>
-              {% endif %}
-            {% else %}&mdash;{% endif %}
-          </td>
-          <td>
-            {% if d.online %}
-              <span class="status-badge normal"><span class="status-dot"></span>Online</span>
-            {% else %}
-              <span class="status-badge offline"><span class="status-dot"></span>Offline</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if not d.online %}
-              <span class="status-badge offline"><span class="status-dot"></span>Unknown</span>
-            {% elif suspect %}
-              <span class="status-badge warning"><span class="status-dot"></span>Suspect</span>
-            {% else %}
-              <span class="status-badge normal"><span class="status-dot"></span>Normal</span>
-            {% endif %}
-          </td>
-          <td class="updated">
-            {% if d.age_s is none %}&mdash;
-            {% elif d.age_s < 90 %}{{ d.age_s }} sec ago
-            {% elif d.age_s < 3600 %}{{ (d.age_s // 60) }} min ago
-            {% else %}{{ (d.age_s // 3600) }} h ago{% endif %}
-          </td>
-        </tr>
+     The reference design heads each block with a converter number and
+     an IP address, and gives every row a Location and a Room No. This
+     keeps the grouping and drops the plumbing from the heading: a
+     converter serves an area, and the area is what somebody walks to.
+     The IP is still there, small, because when a whole block goes grey
+     it is the first thing an engineer wants.
+
+     THE COLUMNS BELONG TO THE GROUP, not to the table. A converter
+     carries a run of one kind of instrument - temperature and humidity
+     displays, or pressure gauges - so each block shows that
+     instrument's parameters and nothing else. A table with every
+     column every product can report would be mostly empty cells, which
+     is the sample data's mistake rather than a real facility's.
+
+     STATUS IS ONE COLUMN AND IT IS FIRST. It used to be two -
+     Connectivity and Alarm - which between them could say "Online" and
+     "Normal" about a device reading eight degrees above its own set
+     point, because nothing compared a reading to its limits. One
+     column, worst-first: silent, out of specification, suspect,
+     approaching, normal. #}
+  {% for group in groups or [] %}
+    <div class="group">
+      <div class="group-head">
+        <strong>{{ group.location }}</strong>
+        <span>{{ group.devices | length }} device{{ '' if group.devices
+              | length == 1 else 's' }}</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th class="col-state"><span class="sr-only">Status</span></th>
+            <th class="col-slave">Slave</th>
+            <th>Location</th>
+            {% for column in group.columns %}
+              <th class="num">{{ column.label }}
+                {% if column.unit %}<span class="dim">({{ column.unit }})</span>
+                {% endif %}</th>
+            {% endfor %}
+            <th class="col-seen">Last Update</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for d in group.devices %}
+            <tr data-device="{{ d.code }}|{{ d.name }}|{{ group.location }}"
+                data-state="{{ 'online' if d.online else 'silent' }}">
+              <td class="col-state">
+                {# A word as well as a colour, in the title: a dot alone
+                   says nothing to a screen reader or to anybody who
+                   cannot tell amber from green. #}
+                <span class="state-dot {{ d.state }}"
+                      title="{{ {'silent': 'No readings arriving',
+                                 'out': 'Outside its set points',
+                                 'suspect': 'Sample flagged by the poller',
+                                 'near': 'Approaching a set point',
+                                 'ok': 'Within its set points'}[d.state] }}">
+                </span>
+                <span class="sr-only">{{ d.state }}</span>
+              </td>
+              <td class="col-slave num">{{ d.unit_id }}</td>
+              <td>
+                <a class="device-link" href="/devices/{{ d.code }}">{{ d.name }}</a>
+              </td>
+              {% for column in group.columns %}
+                {% set point = d.by_param.get(column.param) %}
+                <td class="num reading {{ point.state if point and d.online
+                                          else '' }}">
+                  {% if point and point.value is not none %}
+                    {{ '{:,.{}f}'.format(point.value, column.decimals) }}
+                  {% else %}&mdash;{% endif %}
+                </td>
+              {% endfor %}
+              <td class="updated col-seen">
+                {% if d.age_s is none %}&mdash;
+                {% elif d.age_s < 90 %}{{ d.age_s }} sec ago
+                {% elif d.age_s < 3600 %}{{ (d.age_s // 60) }} min ago
+                {% else %}{{ (d.age_s // 3600) }} h ago{% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    {# Two states worth separating: nothing commissioned is a dashboard
+       waiting for its first instrument, while devices that exist and
+       have never reported is a bus or a poller problem. #}
+    <div class="empty-state">
+      {% if summary and summary.devices %}
+        <strong>No readings yet</strong>
+        <span>{{ summary.devices }} device{{ '' if summary.devices == 1
+              else 's' }} commissioned, none reporting. Check the
+              converter and that the poller is running.</span>
       {% else %}
-        <tr><td colspan="6">
-          {# "Start the simulator and the poller" stood here until a real
-             install was emptied and a customer screen told them to start
-             a simulator. The two states it was running together are
-             worth separating: nothing commissioned is a dashboard
-             waiting for its first instrument, while devices that exist
-             and have never reported is a bus or a poller problem. #}
-          <div class="empty-state">
-            {% if summary and summary.devices %}
-              <strong>No readings yet</strong>
-              <span>{{ summary.devices }} device{{ '' if summary.devices == 1
-                    else 's' }} commissioned, none reporting. Check the
-                    converter and that the poller is running.</span>
-            {% else %}
-              <strong>No devices yet</strong>
-              <span>Add one with the button above: its converter address,
-                    slave ID and type. It is read over Modbus before it is
-                    saved.</span>
-            {% endif %}
-          </div>
-        </td></tr>
-      {% endfor %}
-      {# Revealed by the filter when it has hidden every row. A table
-         that simply ends looks like a system with no devices, which is
-         a different and much more alarming thing than a search that
-         matched nothing. #}
-      <tr id="filtered-empty" hidden><td colspan="6">
-        <div class="empty-state">
-          {{ ico.icon('search', 24) }}
-          <strong>No device matches</strong>
-          <span>Clear the search or the status filter.</span>
-        </div>
-      </td></tr>
-    </tbody>
-  </table>
+        <strong>No devices yet</strong>
+        <span>Add one with the button above: its converter address,
+              slave ID and type. It is read over Modbus before it is
+              saved.</span>
+      {% endif %}
+    </div>
+  {% endfor %}
+
+  {# Revealed by the filter when it has hidden every row. A table that
+     simply ends looks like a system with no devices, which is a
+     different and much more alarming thing than a search that matched
+     nothing. #}
+  <div id="filtered-empty" hidden>
+    <div class="empty-state">
+      {{ ico.icon('search', 24) }}
+      <strong>No device matches</strong>
+      <span>Clear the search or the status filter.</span>
+    </div>
+  </div>
 </div>
 
 {# The design's pagination row. The sentence is always drawn, because

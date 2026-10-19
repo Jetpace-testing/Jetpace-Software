@@ -31,35 +31,39 @@
     {% include "_kpis.html" %}
   </section>
 
-  <div class="dashboard-grid">
+  {# THE DEVICE TABLE HAS THE WHOLE WIDTH. It shared the row with a
+     Facility Overview panel, which grouped the same devices by the same
+     gateways into a second picture of one fact - and cost the table
+     a third of the screen, which it paid for with a horizontal
+     scrollbar. The panel is gone and the grouping moved into the table.
+
+     The selected device's card moves down beside the trend, which is
+     what it is about: both are one device, chosen by the same select. #}
+  <div class="live-row">
     <section class="panel device-panel" id="live"
              hx-get="/partials/live" hx-trigger="every 5s, refresh"
              hx-swap="innerHTML">
       {% include "_live.html" %}
     </section>
-
-    <div class="side-stack">
-      <section class="panel" id="facility">
-        {% include "_facility.html" %}
-      </section>
-
-      {# hx-include sends the trend panel's device select, so the poll
-         refreshes whichever device is selected rather than resetting to
-         the first one. #}
-      <section class="panel selected-device" id="device-card"
-               hx-get="/partials/device-card" hx-trigger="every 15s"
-               hx-include="#trend-device" hx-swap="innerHTML">
-        {% include "_device_card.html" %}
-      </section>
-    </div>
   </div>
 
   <div class="analysis-grid">
     {% include "_trend.html" %}
 
-    <section class="panel distribution-panel" id="distribution">
-      {% include "_distribution.html" %}
-    </section>
+    {# hx-include sends the trend panel's device select, so the poll
+       refreshes whichever device is selected rather than resetting to
+       the first one. #}
+    <div class="side-stack">
+      <section class="panel selected-device" id="device-card"
+               hx-get="/partials/device-card" hx-trigger="every 15s"
+               hx-include="#trend-device" hx-swap="innerHTML">
+        {% include "_device_card.html" %}
+      </section>
+
+      <section class="panel distribution-panel" id="distribution">
+        {% include "_distribution.html" %}
+      </section>
+    </div>
   </div>
 
   <div class="lower-grid">

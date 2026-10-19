@@ -163,6 +163,19 @@ PROBE_TIMEOUT = 1.5
 # different process and may not even be running.
 DEVICE_RELOAD_SECONDS = 10
 
+# How close to a set point counts as close, as a proportion of the band
+# between the low and the high.
+#
+# A READING AID AND NOT A SPECIFICATION. Nobody at a site has agreed
+# that 10% of a band is meaningful; what they agreed is the band. The
+# amber is here because a wall-mounted screen is read from across a
+# room and "about to go out" is worth seeing before "out" - but the only
+# claim the table makes is in or out, and amber is labelled as
+# approaching rather than as a state of the room.
+#
+# One number, one place, changed without touching anything that judges.
+NEAR_MARGIN = 0.10
+
 SHELL_TILES = 4
 
 # The most figures that stay readable in one row, at three widths. Nine
@@ -544,35 +557,12 @@ def create_app(dsn: str,
                   reverse=True)
         return rows[:limit]
 
-    def facility(conn) -> tuple[list[dict], dict]:
-        """
-        Devices grouped by the gateway they hang off, with a count per
-        state.
-
-        The gateway IS the grouping, not a stand-in for one: it is a
-        serial bus or a converter, which on a plant floor is an area. The
-        design's floor plan needs room coordinates, and there is no room
-        in this schema - see the note on FACILITY.
-        """
-        zones: dict[str, dict] = {}
-        counts = {"online": 0, "silent": 0, "never": 0}
-
-        for r in queries.facility(conn):
-            z = zones.setdefault(r["gateway"], {
-                "gateway": r["gateway"], "host": r["host"], "port": r["port"],
-                "enabled": r["enabled"], "site": r["site"], "devices": [],
-            })
-            if r["online"]:
-                marker, state, key = "normal", "online", "online"
-            elif r["newest"] is None:
-                marker, state, key = "warning", "never reported", "never"
-            else:
-                marker, state, key = "offline", "silent", "silent"
-            counts[key] += 1
-            z["devices"].append({"code": r["code"], "name": r["name"],
-                                 "marker": marker, "state": state})
-
-        return list(zones.values()), counts
+    # `facility` stood here, grouping devices by gateway for the
+    # Facility Overview panel beside the live table. Both are gone: the
+    # panel was removed so the device table could have the full width,
+    # and the grouping it did now belongs to the table itself, which
+    # heads each group with the converter's location. One grouping, on
+    # the screen people actually read.
 
     def device_card(conn, code: str | None) -> dict:
         """
@@ -643,6 +633,125 @@ def create_app(dsn: str,
                 return r["code"]
         return rows[0]["code"] if rows else None
 
+    def reading_state(value, limit):
+        """
+        One reading against the set points in force: ok, near or out.
+
+        THE FIRST PLACE IN THIS APPLICATION THAT JUDGES A READING. Until
+        now the overview's alarm column said "Normal" for a device
+        sitting eight degrees above its own high set point, because
+        nothing compared the two - the limits were collected, stored,
+        drawn on the device page, and never looked at.
+
+        This is a statement about the READING, not an alarm: there is no
+        acknowledgement, no duration and no history, so the table says
+        "out of specification" rather than claiming an alarm was raised.
+        The lifecycle is still the larger piece of work.
+        """
+        if value is None or not limit:
+            return "ok"
+        low, high = limit["low"], limit["high"]
+        if low is not None and value < low:
+            return "out"
+        if high is not None and value > high:
+            return "out"
+        # NEAR needs a band to be near the EDGE of. With one set point
+        # there is no span to take a proportion of, and inventing one -
+        # a percentage of the reading, a fixed number of units - would
+        # be inventing a specification nobody at the site agreed to. So
+        # a one-sided limit is in or out, and never amber.
+        if low is None or high is None:
+            return "ok"
+        margin = (high - low) * NEAR_MARGIN
+        if value - low <= margin or high - value <= margin:
+            return "near"
+        return "ok"
+
+    def device_state(device, limits):
+        """
+        The one thing the table says about a device, worst first.
+
+        Silent outranks everything because a reading that is not
+        arriving cannot be judged. A flagged sample outranks `near`
+        because it is a statement about whether the number can be
+        trusted at all, which is worth more than how close that number
+        is to a line.
+        """
+        if not device["online"]:
+            return "silent"
+        worst = "ok"
+        for point in device["points"]:
+            state = reading_state(point["value"],
+                                  limits.get((device["code"], point["param"])))
+            point["state"] = state
+            if state == "out":
+                worst = "out"
+            elif state == "near" and worst == "ok":
+                worst = "near"
+        if worst == "out":
+            return "out"
+        if any(p.get("quality") for p in device["points"]):
+            return "suspect"
+        return worst
+
+    def live_groups(conn):
+        """
+        The live table, grouped by where the converter is.
+
+        ONE GROUP PER CONVERTER, headed by its label, because a
+        converter serves an area - a block, a floor, a corridor of
+        rooms - and that is the unit a person walks to. The rows under
+        it are the rooms, identified by the name they were commissioned
+        with and their position on the bus.
+
+        THE COLUMNS ARE PER GROUP, not per table. A converter carries
+        one kind of instrument: a run of temperature and humidity
+        displays, or a run of pressure gauges. Giving the whole table
+        every column every product can report would leave most cells
+        empty on every row, which is the design's own sample data
+        mistake and not something real instruments do. Where a group
+        does hold a mixture, the columns are the union and a device
+        that does not read one shows a dash.
+        """
+        limits = queries.limits(conn)
+        # THE COLUMN ORDER IS THE PRODUCT'S, not the query's. `LIVE`
+        # orders by parameter key so two reads of unchanged data are
+        # identical, which puts `rh` before `temp` - alphabetical, and
+        # not how anybody reads a cleanroom. A device type lists its
+        # points in the order its product meant them to be read, and
+        # that is the order the device page already uses for its tiles.
+        order = {}
+        for _code, (_slug, device_type) in device_types().items():
+            for point in device_type.points:
+                order.setdefault(point.param, len(order))
+        groups: dict[str, dict] = {}
+        for device in rows_for_live(conn):
+            group = groups.setdefault(device["gateway"], {
+                "location": device["gateway"], "devices": [],
+                "columns": [], "seen": {},
+            })
+            device["state"] = device_state(device, limits)
+            device["by_param"] = {p["param"]: p for p in device["points"]}
+            for point in device["points"]:
+                if point["param"] not in group["seen"]:
+                    group["seen"][point["param"]] = True
+                    group["columns"].append({
+                        "param": point["param"],
+                        "label": point["param_label"] or point["param"],
+                        "unit": point["unit"],
+                        "decimals": point["decimals"],
+                    })
+            group["devices"].append(device)
+        for group in groups.values():
+            group.pop("seen")
+            group["devices"].sort(key=lambda d: (d["unit_id"], d["code"]))
+            # A parameter no loaded product declares sorts last rather
+            # than first: it is a device whose product was switched off,
+            # which the poller already names in `Plan.unreadable`.
+            group["columns"].sort(
+                key=lambda c: order.get(c["param"], len(order)))
+        return sorted(groups.values(), key=lambda g: g["location"] or "")
+
     def rows_for_live(conn):
         """Group the flat live query into one entry per device."""
         by_device: dict[str, dict] = {}
@@ -673,7 +782,6 @@ def create_app(dsn: str,
         auth_routes.require(request, permissions.VIEW)
         with queries.connect(dsn) as conn:
             rows = rows_for_live(conn)
-            zones, counts = facility(conn)
             tiles = product_tiles(conn)
             first = initial_device(rows)
             catalogue = device_types()
@@ -696,12 +804,10 @@ def create_app(dsn: str,
                                         default.code_prefix)
                     if default else ""),
                 "devices": rows,
+                "groups": live_groups(conn),
                 "product_tiles": tiles,
                 "kpi_columns": kpi_grid(SHELL_TILES + len(tiles)),
                 "distribution": queries.distribution(conn),
-                "zones": zones,
-                "counts": counts,
-                "site_label": zones[0]["site"] if zones else None,
                 "card": device_card(conn, first),
                 "selected": first,
                 "trend_points": trend_points(rows),
@@ -1099,17 +1205,14 @@ def create_app(dsn: str,
         """
         auth_routes.require(request, permissions.VIEW)
         with queries.connect(dsn) as conn:
-            zones, counts = facility(conn)
             tiles = product_tiles(conn)
             return templates.TemplateResponse(request, "_live_push.html", {
                 "summary": queries.summary(conn),
                 "devices": rows_for_live(conn),
+                "groups": live_groups(conn),
                 "product_tiles": tiles,
                 "kpi_columns": kpi_grid(SHELL_TILES + len(tiles)),
                 "distribution": queries.distribution(conn),
-                "zones": zones,
-                "counts": counts,
-                "site_label": zones[0]["site"] if zones else None,
             })
 
     @app.get("/partials/device-card", response_class=HTMLResponse)

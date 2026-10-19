@@ -37,6 +37,17 @@ NOW = datetime(2026, 10, 14, 10, 32, 45, tzinfo=timezone.utc)
 
 # --- the stub -------------------------------------------------------------
 
+def row(code="D1", name="one", gateway="Bus A", unit_id=1, param="dp",
+        param_label="Differential pressure", unit="Pa", decimals=1,
+        value=12.0, online=True, age_s=2, quality=0):
+    """One row of the live query: a device, a parameter, its newest value."""
+    return {"code": code, "name": name, "gateway": gateway,
+            "unit_id": unit_id, "param": param, "param_label": param_label,
+            "unit": unit, "decimals": decimals, "aggregation":
+            "instantaneous", "value": value, "ts": NOW, "quality": quality,
+            "online": online, "age_s": age_s}
+
+
 def stub(monkeypatch, **overrides):
     """
     Every query the overview and its partials run, answered in memory.
@@ -56,7 +67,6 @@ def stub(monkeypatch, **overrides):
         "live": [],
         "distribution": {"devices": 3, "online": 2, "silent": 1,
                          "never_seen": 0, "gateways": 2, "gateways_live": 1},
-        "facility": [],
         "silence": [],
         "suspect": [],
         "device": None,
@@ -70,6 +80,9 @@ def stub(monkeypatch, **overrides):
         "tenant_id": 1,
         "suggest_code": "DP-004",
         "device_limits": {},
+        # The set points in force, keyed (device code, parameter). The
+        # live table compares a reading to them.
+        "limits": {},
     }
     answers.update(overrides)
 
@@ -78,7 +91,6 @@ def stub(monkeypatch, **overrides):
     monkeypatch.setattr(q, "summary", lambda conn: answers["summary"])
     monkeypatch.setattr(q, "live", lambda conn: answers["live"])
     monkeypatch.setattr(q, "distribution", lambda conn: answers["distribution"])
-    monkeypatch.setattr(q, "facility", lambda conn: answers["facility"])
     monkeypatch.setattr(q, "silence",
                         lambda conn, limit=12: answers["silence"])
     monkeypatch.setattr(q, "suspect",
@@ -93,6 +105,7 @@ def stub(monkeypatch, **overrides):
     monkeypatch.setattr(q, "tenant_id", lambda conn: answers["tenant_id"])
     monkeypatch.setattr(q, "device_limits",
                         lambda conn, code: answers["device_limits"])
+    monkeypatch.setattr(q, "limits", lambda conn: answers["limits"])
 
     from jetpace_core.web import writes as w
     monkeypatch.setattr(w, "suggest_code",
@@ -292,48 +305,66 @@ def test_the_exceptions_panel_says_it_is_not_an_alarm_log(monkeypatch):
 
 # --- the facility panel --------------------------------------------------
 
-def test_devices_group_by_gateway_with_a_count_per_state(monkeypatch):
+def test_the_live_table_groups_by_converter_and_heads_it_with_a_place(
+        monkeypatch):
     """
-    Three states, not two: never-reported is a commissioning fault and
-    silent is a fault in the field, and merging them sends somebody to
-    the wrong place.
+    THE GROUPING THAT REPLACED THE FACILITY PANEL. It grouped the same
+    devices by the same gateways into a second picture of one fact, and
+    cost the table a third of the screen - which the table paid for
+    with a horizontal scrollbar.
+
+    A converter serves an area, so its label heads the block and the
+    rooms are listed under it.
     """
-    stub(monkeypatch, facility=[
-        {"gateway": "Bus A", "host": "10.0.0.5", "port": 502,
-         "enabled": True, "site": "Plant 1", "code": "D1", "name": "one",
-         "newest": NOW, "online": True, "age_s": 2},
-        {"gateway": "Bus A", "host": "10.0.0.5", "port": 502,
-         "enabled": True, "site": "Plant 1", "code": "D2", "name": "two",
-         "newest": NOW - timedelta(hours=5), "online": False, "age_s": 18000},
-        {"gateway": "Bus B", "host": "10.0.0.6", "port": 502,
-         "enabled": False, "site": "Plant 1", "code": "D3", "name": "three",
-         "newest": None, "online": None, "age_s": None},
+    stub(monkeypatch, live=[
+        row(code="CR-001", name="Testing room", gateway="Block A",
+            unit_id=1, param="temp", value=23.5),
+        row(code="CR-002", name="Corridor", gateway="Block A",
+            unit_id=2, param="temp", value=22.1),
+        row(code="CR-010", name="Gowning", gateway="Block B",
+            unit_id=1, param="dp", value=-12.5),
     ])
 
     body = TestClient(create_app(DSN)).get("/").text
 
-    assert "Bus A" in body and "Bus B" in body
-    assert "2 gateways" in body
-    assert "Online <b>1</b>" in body
-    assert "Silent <b>1</b>" in body
-    assert "Never reported <b>1</b>" in body
-    # The disabled gateway is drawn differently rather than hidden: a bus
-    # somebody switched off is a reason devices are quiet.
-    assert "zone disabled" in body
+    assert "Block A" in body and "Block B" in body
+    assert "Testing room" in body and "Corridor" in body
+    # Two devices on one converter, one on the other.
+    assert "2 devices" in body and "1 device" in body
 
 
-def test_the_facility_panel_invents_no_floor_plan():
+def test_a_block_shows_only_the_parameters_its_instruments_read(
+        monkeypatch):
     """
-    The design positions five named zones at hand-chosen coordinates.
-    There is no room, zone or coordinate in this schema, so a floor plan
-    here could only be invented - and an invented plan in front of a
-    customer is a promise the software cannot keep.
+    A converter carries a run of one kind of instrument. Giving the
+    whole table every column every product can report would leave most
+    cells empty on every row - which is the sample data's mistake
+    rather than a real facility's.
     """
-    markup = without_comments(TEMPLATES / "_facility.html")
-    for invented in ("cleanroom", "production", "warehouse", "utility",
-                     "electrical"):
-        assert f'class="zone {invented}' not in markup.lower()
-    assert "grouped by gateway" in markup
+    stub(monkeypatch, live=[
+        row(code="CR-001", name="Testing room", gateway="Block A",
+            unit_id=1, param="temp", param_label="Temperature",
+            unit="°C", value=23.5),
+        row(code="CR-001", name="Testing room", gateway="Block A",
+            unit_id=1, param="rh", param_label="Relative humidity",
+            unit="%RH", value=48.2),
+        row(code="DP-001", name="Gowning", gateway="Block B",
+            unit_id=1, param="dp", param_label="Differential pressure",
+            unit="Pa", value=-12.5),
+    ])
+
+    body = TestClient(create_app(DSN)).get("/").text
+
+    def block(place):
+        """One group, from its heading to the end of its own table."""
+        start = body.index(place)
+        return body[start:body.index("</table>", start)]
+
+    a, b_block = block("Block A"), block("Block B")
+    assert "Temperature" in a and "Relative humidity" in a
+    assert "Differential pressure" not in a
+    assert "Differential pressure" in b_block
+    assert "Temperature" not in b_block
 
 
 # --- the distribution donut ----------------------------------------------
@@ -866,3 +897,29 @@ def test_the_logo_is_a_vector_and_not_a_picture_of_one():
         assert "base64" not in text and "<image" not in text, (
             f"{svg.name} embeds a raster")
         assert "<path" in text
+
+
+def test_the_columns_are_in_the_order_the_product_declared(monkeypatch):
+    """
+    `LIVE` orders by parameter key so two reads of unchanged data come
+    back identical - which puts `rh` before `temp`, alphabetical and
+    not how anybody reads a cleanroom. A device type lists its points in
+    the order its product meant them, and the device page already lays
+    its tiles out that way.
+    """
+    from bench import BENCH_PAIR
+
+    stub(monkeypatch, live=[
+        # Posted in the query's order: beta sorts before alpha.
+        row(code="BP-001", name="Room", gateway="Bench", unit_id=1,
+            param="beta", param_label="Beta", unit="v", value=2.0),
+        row(code="BP-001", name="Room", gateway="Bench", unit_id=1,
+            param="alpha", param_label="Alpha", unit="u", value=1.0),
+    ])
+    from jetpace_core.web import products as P
+    product = P.Product(slug="demo", label="Demo",
+                        device_types=(BENCH_PAIR,))
+    body = TestClient(create_app(DSN, [product])).get("/").text
+    head = body[body.index("Bench"):body.index("</thead>",
+                                               body.index("Bench"))]
+    assert head.index("Alpha") < head.index("Beta")

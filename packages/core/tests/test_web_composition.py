@@ -480,7 +480,7 @@ def _stub_db(monkeypatch):
     monkeypatch.setattr(q, "distribution", lambda conn: {
         "devices": 8, "online": 3, "silent": 4, "never_seen": 1,
         "gateways": 2, "gateways_live": 1})
-    monkeypatch.setattr(q, "facility", lambda conn: [])
+    monkeypatch.setattr(q, "limits", lambda conn: {})
     monkeypatch.setattr(q, "silence", lambda conn, limit=12: [])
     monkeypatch.setattr(q, "suspect", lambda conn, hours=6, limit=12: [])
     monkeypatch.setattr(q, "device", lambda conn, code: None)

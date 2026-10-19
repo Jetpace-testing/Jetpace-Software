@@ -498,6 +498,62 @@ tr.is-retired { opacity: .55; }
 
 /* --- tables -------------------------------------------------------------- */
 
+/* ==========================================================================
+ * THE LIVE TABLE, ONE BLOCK PER CONVERTER
+ *
+ * A converter serves an area and carries a run of one kind of
+ * instrument, so each block is headed by where it is and shows that
+ * instrument's parameters. No horizontal scroll: with the full width
+ * and the columns a real converter actually has, there is nothing to
+ * scroll to.
+ * ====================================================================== */
+
+.table-wrap { overflow-x: auto; }
+.table-wrap .group + .group { margin-top: 16px; }
+
+.group-head {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 9px 14px; background: var(--canvas);
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+}
+.group-head strong { font-size: var(--t-9); color: var(--ink);
+                     font-weight: 650; }
+.group-head span { font-size: var(--t-8); color: var(--muted); }
+.group-head .host { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+/* Narrow and fixed, so the readings line up down the page across blocks
+ * whose instruments differ. */
+.col-state { width: 34px; text-align: center; padding-right: 0; }
+.col-slave { width: 62px; }
+.col-seen { width: 110px; }
+
+/* THE ONE STATUS COLUMN. It replaced two - Connectivity and Alarm -
+ * which between them could say "Online" and "Normal" about a device
+ * reading well outside its own set points, because nothing compared a
+ * reading to its limits.
+ *
+ * Never colour alone: every dot carries a title, and the state is in
+ * the row for a screen reader. */
+.state-dot { display: inline-block; width: 9px; height: 9px;
+             border-radius: 50%; background: var(--good);
+             box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 22%, transparent); }
+.state-dot.silent { background: #9aa8b5; box-shadow: none; }
+.state-dot.near { background: var(--warning);
+                  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 25%, transparent); }
+.state-dot.suspect { background: var(--warning); box-shadow: none; }
+.state-dot.out { background: var(--critical);
+                 box-shadow: 0 0 0 3px color-mix(in srgb, var(--critical) 28%, transparent); }
+
+/* The reading itself carries the verdict too, so a row with three
+ * parameters says WHICH of them is out rather than only that one is. */
+td.reading { font-variant-numeric: tabular-nums; color: var(--ink);
+             font-weight: 600; }
+td.reading.near { color: var(--warning); }
+td.reading.out { color: var(--critical); }
+
+tr[data-device] td a.device-link { color: var(--ink); font-weight: 500; }
+tr[data-device] td a.device-link:hover { color: var(--blue); }
+
 .table-scroll, .tablewrap { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; }
 .table-scroll table { min-width: 900px; }
@@ -596,6 +652,11 @@ a.code { font-variant-numeric: tabular-nums; font-weight: 600; }
   display: grid; gap: 14px; align-items: start;
   grid-template-columns: minmax(0, 1.65fr) minmax(355px, .75fr);
 }
+/* The device table has the row to itself. It used to share it with the
+ * Facility Overview, which grouped the same devices by the same
+ * gateways and cost the table a third of the screen - which the table
+ * paid for with a horizontal scrollbar. */
+.live-row { display: grid; grid-template-columns: minmax(0, 1fr); }
 .analysis-grid, .lower-grid { margin-top: 14px; }
 .side-stack { display: grid; gap: 14px; }
 .device-panel { min-height: 610px; }

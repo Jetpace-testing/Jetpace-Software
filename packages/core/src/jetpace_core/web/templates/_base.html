@@ -388,6 +388,19 @@
     // the template's own "nothing commissioned" state, so the panel gave
     // two different explanations at once. Seen the moment the prototype
     // data was purged.
+    // A GROUP WITH NOTHING LEFT IN IT GOES TOO. The table is one block
+    // per converter, so a search that matches nothing in one block would
+    // otherwise leave its heading and its column titles standing over an
+    // empty space - which reads as a converter whose devices have all
+    // disappeared rather than as a filter.
+    //
+    // After the paginator, because that hides rows as well and whichever
+    // ran last would otherwise decide.
+    document.querySelectorAll(".group").forEach(function (group) {
+      var visible = group.querySelectorAll("tr[data-device]:not([hidden])");
+      group.hidden = visible.length === 0;
+    });
+
     var empty = document.getElementById("filtered-empty");
     if (empty) { empty.hidden = total === 0 || matched.length !== 0; }
   }

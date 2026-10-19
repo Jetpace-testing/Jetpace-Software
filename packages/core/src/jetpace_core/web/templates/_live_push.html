@@ -15,8 +15,12 @@
    back as out-of-band swaps. HTMX lifts any top-level element carrying
    `hx-swap-oob` out of the response and swaps it into the element with
    the same id, wherever that is in the document. The target region gets
-   the rest. One round trip, one connection, four panels updated, and the
-   chart between them untouched.
+   the rest. One round trip, one connection, three panels updated, and
+   the chart between them untouched.
+
+   It was four until the Facility Overview was removed - it grouped the
+   same devices by the same gateways as the table beside it, and the
+   table does that grouping itself now.
 
    Each out-of-band element has to carry its own tag, id and classes,
    because the swap replaces the whole element and not its contents. That
@@ -27,10 +31,6 @@
 
 <section class="kpi-grid" id="kpis" style="{{ kpi_columns }}" aria-label="Key figures" hx-swap-oob="true">
   {% include "_kpis.html" %}
-</section>
-
-<section class="panel" id="facility" hx-swap-oob="true">
-  {% include "_facility.html" %}
 </section>
 
 <section class="panel distribution-panel" id="distribution" hx-swap-oob="true">

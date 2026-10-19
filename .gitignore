@@ -20,11 +20,13 @@ installer/vendor/
 # dev-only: database, logs, generated passwords
 .local/
 
-# Manufacturer datasheets: 110 MB of PDFs, reference material not source.
-# Git cannot delta-compress them, so every clone would pay for all of it
-# forever - and several are customer-specific. Register maps are pinned to
-# these by tests, so keep the folder, just not in history.
-Modbus Mapping/
+# The manufacturer datasheets used to sit here, ignored, and were moved
+# out on 19 October 2026: they are the instrument range's documentation,
+# not this project's source. The ignore rule went with them DELIBERATELY.
+# If the folder ever reappears here, git status should say so - that is a
+# useful signal that 110 MB of PDFs are back in the wrong repository,
+# which an ignore rule would hide. docs/instruments.md says where they are
+# and how a transcription records which document it came from.
 
 # Per-developer Claude Code permissions, not project configuration.
 .claude/settings.local.json

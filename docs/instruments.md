@@ -3,6 +3,16 @@
 What this platform can commission, what it will be able to commission, and
 which datasheet each answer comes from.
 
+**THE DATASHEETS ARE NOT IN THIS REPOSITORY.** They were in a `Modbus Mapping/`
+folder here and were moved out on 19 October 2026, because they are not this
+project's: they are the vendor documentation for the instrument range, and they
+live with it. On the build machine today that is
+`D:\Jetpace TC Generator\Modbus Mapping`. A transcription records which
+document it came from in `DeviceModel.datasheet_ref`, so a commissioned device
+can always name its source without the PDF being alongside the code.
+
+This file names each document rather than linking to it, for the same reason.
+
 **A register map lives in the product package that sells the instrument, never
 in core, and is pinned to its datasheet by a test in that package** (CLAUDE.md).
 So "supported" means exactly one thing here: a `DeviceType` exists, with a test
@@ -21,12 +31,13 @@ saying its map has not been transcribed yet. See `jetpace_core.devices.Planned`.
 |---|---|
 | **mapped** | A `DeviceType` exists and its addresses are pinned by a test. Commissionable. |
 | **planned** | Declared in the product's `PLANNED` tuple. Visible in the form, greyed, not selectable. |
-| *(blank)* | The datasheet is on disk and nothing has been declared for it yet. |
+| *(blank)* | A datasheet exists for it and nothing has been declared yet. |
 
 ## Transcribing one
 
 The datasheet gives registers; the product decides what they mean. In order:
 
+0. Find the document. It is not in this repository — see above.
 1. `Register` per address — `datasheet_number` exactly as the PDF prints it
    (`wire_address` subtracts 40001; never do that subtraction by hand), the
    data type, and `writable=True` **only** where Phase 2 is meant to write.

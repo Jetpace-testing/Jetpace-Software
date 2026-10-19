@@ -687,6 +687,7 @@ def create_app(dsn: str,
                 # table and the modal is already in the page.
                 "device_types": {code: entry[1]
                                  for code, entry in catalogue.items()},
+                "type_groups": type_groups(),
                 "device_type": default,
                 "planned_types": planned_types(),
                 "default_port": default.default_port if default else 502,
@@ -737,6 +738,30 @@ def create_app(dsn: str,
         way to notice a product being enabled.
         """
         return products_.device_types(products)
+
+    def type_groups() -> list:
+        """
+        The catalogue as the dropdown shows it: families, then variants.
+
+        Several models can be one instrument with different sensors
+        fitted - a cleanroom display comes as pressure, as temperature
+        and humidity, or as all three - and an operator looks for the
+        product before the variant.
+
+        GROUPED IN DECLARATION ORDER, not with Jinja's `groupby`, which
+        sorts by the attribute. Sorting would move whichever entry the
+        browser selects by default away from the one `index` computed
+        the fields for, and a form showing one instrument selected
+        beside another's set points is the fault this whole partial
+        exists to prevent.
+        """
+        groups: list[tuple[str, list]] = []
+        for _code, (_slug, device_type) in device_types().items():
+            if groups and groups[-1][0] == device_type.family:
+                groups[-1][1].append(device_type)
+            else:
+                groups.append((device_type.family, [device_type]))
+        return groups
 
     def planned_types() -> list:
         """

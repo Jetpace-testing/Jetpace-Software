@@ -121,8 +121,21 @@
                       hx-target="#limit-fields" hx-swap="outerHTML"
                       hx-sync="this:abort"
                       hx-trigger="change">
-                {% for code, entry in device_types.items() %}
-                  <option value="{{ code }}">{{ entry.title }}</option>
+                {# Variants of one instrument sit under their family, so
+                   an operator finds the product first and the variant
+                   second. A type with no family is a plain option. #}
+                {% for family, entries in type_groups or [] %}
+                  {% if family %}
+                    <optgroup label="{{ family }}">
+                      {% for entry in entries %}
+                        <option value="{{ entry.code }}">{{ entry.title }}</option>
+                      {% endfor %}
+                    </optgroup>
+                  {% else %}
+                    {% for entry in entries %}
+                      <option value="{{ entry.code }}">{{ entry.title }}</option>
+                    {% endfor %}
+                  {% endif %}
                 {% endfor %}
                 {# Instruments this install will sell and cannot yet,
                    because nobody has transcribed the datasheet. DISABLED,

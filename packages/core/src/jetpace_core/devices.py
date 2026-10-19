@@ -210,6 +210,16 @@ class DeviceType:
     kind: str                           # device_model.kind
     points: tuple[Point, ...]
     label: str = ""
+    # Optional: the product this is a variant of. Several models that
+    # are one instrument with different sensors fitted share a family,
+    # and the form groups them under it - so an operator finds the
+    # product first and chooses the variant second, which is how the
+    # people who sell them talk about them.
+    #
+    # A label and nothing more. Nothing is resolved through it and two
+    # families are never compared; a typo makes a second heading on a
+    # dropdown, not a device read at the wrong address.
+    family: str = ""
     # A serial-to-TCP converter in Modbus-gateway mode passes the slave
     # address through on one port, which is 502 by convention. In
     # transparent mode it is one port per device instead, and the operator

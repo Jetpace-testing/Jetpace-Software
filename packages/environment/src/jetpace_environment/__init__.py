@@ -35,30 +35,71 @@ jetpace_core.inventory and jetpace_core.selection. Nothing in the import
 chain below this line touches a socket, a database or a web framework.
 """
 
-from jetpace_core.devices import Planned
+from jetpace_core.devices import DeviceType, Planned, Point
+
+from .registers import model
 
 __all__ = ["DEVICE_TYPES", "PLANNED"]
 
 # ---------------------------------------------------------------------------
 # what this product can commission
 #
-# Nothing, today. An empty tuple is a valid product: the form's device
-# type list is built from every loaded product's types, and a product
-# contributing none simply adds none.
+# The Cleanroom Display, in its three variants. One instrument, one
+# register map (registers.py), three models differing only in which
+# sensors are fitted - so an operator picks the product and then the
+# variant, which is how they are sold and how they are labelled on the
+# wall.
 #
-# What goes here is one `DeviceType` per instrument - the register map
-# from its datasheet, pinned by a test, plus this product's decisions
-# about it: which registers become stored parameters, in what unit, at
-# what scale, and which of them an operator's set points apply to.
+# THE POINTS ARE DEFINED ONCE AND SHARED. Three variants reading
+# temperature must agree about what `temp` means down to its decimals,
+# because there is one `parameter` row per key for the whole install.
+# `devices.check_parameters` refuses to start otherwise; defining them
+# here means it never has to.
 #
-# The scale is the number to get right. An instrument reporting tenths
-# read as whole units is wrong by a factor of ten in every reading, every
-# trend and every report, consistently and with nothing on screen to
-# suggest it. It is one number in one place while the instrument is on
-# the bench, and a site visit afterwards.
+# SET POINT 1 IS THE LOW ONE, set point 2 the high. The datasheet does
+# not say; the person who owns the instrument does, and it is written
+# down in registers.py beside the addresses it decides.
+#
+# SCALE IS 1.0 HERE AND IS NOT THE SCALE USED. How many decimal places
+# a channel reports is configurable per instrument, at 40022-40024, so
+# it is read at commissioning and stored against the device in
+# `device_parameter.scale`, which overrides this. A figure invented
+# here would be the one that silently multiplies a room's history by
+# ten on the one unit somebody had configured differently.
 # ---------------------------------------------------------------------------
 
-DEVICE_TYPES = ()
+FAMILY = "Cleanroom Display"
+
+TEMPERATURE = Point("temp", "temp_pv", "Temperature", "°C",
+                    aggregation="instantaneous", decimals=1, limited=True)
+HUMIDITY = Point("rh", "rh_pv", "Relative humidity", "%RH",
+                 aggregation="instantaneous", decimals=1, limited=True)
+PRESSURE = Point("dp", "dp_pv", "Differential pressure", "Pa",
+                 aggregation="instantaneous", decimals=1, limited=True)
+
+
+def _variant(code: str, label: str, kind: str, points) -> DeviceType:
+    return DeviceType(
+        model=model(code),
+        kind=kind,
+        label=label,
+        family=FAMILY,
+        points=points,
+        code_prefix="CR",
+        # `critical`: a cleanroom is qualified on these readings. That
+        # is this product's call and not the platform's.
+        scan_class="critical",
+    )
+
+
+DEVICE_TYPES = (
+    _variant("iCRDN-230-RT", "temperature and humidity", "temperature",
+             (TEMPERATURE, HUMIDITY)),
+    _variant("iCRDN-230-D", "differential pressure", "pressure",
+             (PRESSURE,)),
+    _variant("iCRDN-230-DRT", "pressure, temperature and humidity",
+             "temperature", (PRESSURE, TEMPERATURE, HUMIDITY)),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -76,7 +117,6 @@ DEVICE_TYPES = ()
 # ---------------------------------------------------------------------------
 
 PLANNED = (
-    Planned("iRHT-320", "Cleanroom temperature and humidity transmitter"),
     Planned("DPT-100", "Differential pressure transmitter"),
     Planned("RTD-100", "RTD temperature probe"),
 )

@@ -39,50 +39,33 @@ def test_the_product_describes_itself_to_the_shell():
     assert p.label == "Environment"
 
 
-def test_an_empty_product_is_a_valid_one():
+def test_every_other_contribution_stays_optional():
     """
-    No instruments, no pages, no stylesheet, no overview tiles. Every one
-    of those is optional on Product, and this is the state the package is
-    in until its next instrument arrives.
-
-    It matters that this is CHECKED rather than merely true: a product
-    that half-exists - routes with no templates, a stylesheet with no
-    static directory - is refused at import by Product.__post_init__, and
-    this asserts the empty case passes that gate instead of tripping it.
+    The product sells instruments and has no pages, no stylesheet and
+    no overview tiles - and that is a valid Product, not a half-built
+    one. A product with routes but no templates IS refused, by
+    Product.__post_init__; this asserts the legitimate shape passes.
     """
     from jetpace_environment.web import product
 
     p = product()
-    assert p.device_types == ()
     assert p.routes is None
     assert p.templates is None
     assert p.static is None and p.stylesheet is None
     assert p.tiles is None and p.events is None
+    assert p.device_types, "it sells at least one instrument now"
 
 
-def test_the_package_names_no_instrument():
-    """
-    "Forget the datasheets and registers." A stray reference to the
-    transmitter that used to live here - in a docstring, a parameter key,
-    a register name - is how a deleted instrument comes back as a thing
-    somebody half-implements against.
-
-    The package docstring is allowed to say what was removed and why.
-    Nothing else is.
-    """
-    from pathlib import Path
-
-    import jetpace_environment
-
-    root = Path(jetpace_environment.__file__).parent
-    for path in root.rglob("*.py"):
-        source = path.read_text(encoding="utf-8")
-        if path.name == "__init__.py" and path.parent == root:
-            # The one file that explains the removal.
-            source = source.split('"""', 2)[-1]
-        lowered = source.lower()
-        for gone in ("idp", "dp_pv", "never_write", "'dp'", '"dp"'):
-            assert gone not in lowered, f"{path.name} still mentions {gone}"
+# `test_the_package_names_no_instrument` stood here. It forbade the
+# strings "idp", "dp_pv", "never_write" and "dp" anywhere in this
+# package, to stop the differential pressure transmitter that was
+# removed on 17 October creeping back a line at a time.
+#
+# It is retired on purpose, not worked around. The Cleanroom Display
+# has a differential pressure channel, a real datasheet and a real
+# customer, so `dp` is now a parameter this product measures. A guard
+# that would have to be edited to let correct code through has stopped
+# guarding anything.
 
 
 # --- what it will sell, and cannot yet ------------------------------------
@@ -99,7 +82,7 @@ def test_the_product_declares_the_instruments_it_is_waiting_for():
     from jetpace_environment.web import product
 
     planned = {p.code for p in product().planned}
-    assert {"iRHT-320", "DPT-100", "RTD-100"} <= planned
+    assert {"DPT-100", "RTD-100"} <= planned
 
 
 def test_nothing_planned_is_also_sold():

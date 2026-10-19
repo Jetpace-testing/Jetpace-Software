@@ -57,14 +57,17 @@ nothing on screen to say so. Confirm it against the instrument on the bench.
 
 | Instrument | Vendor | Quantities | Datasheet | Status |
 |---|---|---|---|---|
-| iRHT-320 | Jetpace | temperature, humidity | `iRHT-320 MODBUS MAPPING FOR USER.pdf`, `iRHT-320  user guide.pdf` | planned |
+| **iCRDN-230-RT** | Jetpace | temperature, humidity | `Cleanroom Modbus Mapping` (2026-10-19) | **mapped** |
+| **iCRDN-230-D** | Jetpace | differential pressure | same map | **mapped** |
+| **iCRDN-230-DRT** | Jetpace | pressure, temperature, humidity | same map | **mapped** |
+| iRHT-320 | Jetpace | temperature, humidity | `iRHT-320 MODBUS MAPPING FOR USER.pdf` | |
 | iRHT-320W | Jetpace | temperature, humidity | `iRHT-320W MODBUS MAPPING 250823.pdf` | |
 | iRHT-320W (7-terminal) | Jetpace | temperature, humidity | `iRHT-320W (7-terminals) MODBUS MAPPING.pdf` | |
 | RHT-320 UTR | Jetpace | temperature, humidity | `RHT-320 UTR Modbus Mapping 260428.pdf` | |
-| Cleanroom unit | Jetpace | — *(read the manual: this may be a display head over the above)* | `clean room manual - Jetpace.pdf` | planned |
+| Cleanroom unit | Jetpace | see the three iCRDN-230 rows above | `clean room manual - Jetpace.pdf` | |
 | Cleanroom unit | Nextech | — | `clean room manual - nextech.pdf` | |
-| RTD probe | Jetpace | temperature | `RTD MODBUS MAPING.pdf` | planned |
 | DP transmitter | Jetpace | differential pressure | `Differential Pressure Transmitter Modbus Mapping.pdf`, `DP Manual Jetpace.pdf` | planned |
+| RTD probe | Jetpace | temperature | `RTD MODBUS MAPING.pdf` | planned |
 | DP gauge | Nextech | differential pressure | `Differential Pressure Gauge Modbus Mapping NEXTECH.pdf`, `DP NEXTECH Manual.pdf` | |
 | Filter display unit | Jetpace | differential pressure, filter state | `Filter Display Unit Modbus Mapping.pdf` | |
 | Air quality monitor | Jetpace | CO2, TVOC, particulate, temperature, humidity | `Air Quality Monitor Modbus Mapping.pdf` | |
@@ -105,3 +108,23 @@ constraint leaves that test comparing against the original list.
 unit, aggregation and decimals or refuses to start. Where two vendors' maps
 describe the same quantity, share the point definitions with a function inside
 the product package rather than copying them.
+
+
+## What the first transcription turned up
+
+Worth knowing before the next one, because the same questions will come up:
+
+- **A datasheet can be ambiguous about what an address means.** 40001-40003
+  on the Cleanroom Display are temperature/humidity/pressure in one mode and
+  three differential pressures in another, decided by `HDIU_EN` at 40065. The
+  map reads them as the first and records the mode register so a commissioning
+  record can say which the instrument was in.
+- **Scale may not be a property of the model at all.** `Decimal_Point_Set` is
+  writable per channel, so two identical instruments can report the same
+  quantity with different decimal places. It is read at commissioning and
+  stored against the device.
+- **A written value may not survive a power cycle.** This instrument needs
+  1221 committed to `SAVE_EN`, so "write, read back, record" is not enough on
+  its own — the read-back would confirm a value that will be forgotten.
+- **"SP1" and "SP2" need a human to say which is low.** No datasheet in this
+  range appears to.

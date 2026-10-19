@@ -461,6 +461,25 @@ main { min-width: 0; width: calc(100% - 226px); background: var(--canvas); }
                   box-shadow: 0 4px 12px rgba(8,126,164,.22); }
 .primary-button:hover { background: var(--blue-accent); }
 
+/* The one destructive control in the application. It borrows the
+ * primary button's shape and the critical token's colour: it should read
+ * as the same KIND of thing as Commission, and as the opposite act. */
+.danger-button { display: inline-flex; align-items: center; gap: 6px;
+                 border: 0; background: var(--critical); color: #fff;
+                 font-size: var(--t-10); font-weight: 600; height: 32px;
+                 padding: 0 13px; border-radius: var(--radius-sm);
+                 cursor: pointer; white-space: nowrap; }
+.danger-button:hover { filter: brightness(1.08); }
+
+.retire .card { padding: 16px; }
+.retire p { margin: 0 0 12px; color: var(--ink-2);
+            font-size: var(--t-9); line-height: 1.55; max-width: 62ch; }
+.retire-actions { display: flex; gap: 8px; align-items: center;
+                  margin-top: 12px; }
+.retired-on, .retired-note { color: var(--critical); }
+/* A retired device in the list: present, and visibly no longer read. */
+tr.is-retired { opacity: .55; }
+
 .table-toolbar { display: flex; flex-wrap: wrap; gap: 7px;
                  padding: 0 16px 12px; }
 .table-search { height: 32px; min-width: 190px; flex: 1 1 190px; display: flex;

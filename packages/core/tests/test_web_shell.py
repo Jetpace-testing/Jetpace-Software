@@ -138,15 +138,45 @@ def test_the_shell_queries_name_no_parameter_key(sql_name):
     assert "'kwh_import'" not in sql
 
 
-@pytest.mark.parametrize("sql_name", ["DEVICES", "DEVICE", "DEVICE_POINTS",
+@pytest.mark.parametrize("sql_name", ["DEVICE", "DEVICE_POINTS",
                                       "TREND_RAW", "TREND_ROLLUP"])
-def test_the_shell_queries_hide_retired_devices_or_filter_by_code(sql_name):
+def test_the_shell_queries_say_what_they_do_about_retirement(sql_name):
     """
-    A retired device keeps its readings, so every list must exclude it
-    explicitly - or be scoped to one code the caller already named.
+    A retired device keeps its readings, so a query either excludes it
+    explicitly, is scoped to one code the caller already named, or says
+    what it is doing about it.
+
+    DEVICES is no longer in this list, deliberately: dropping retired
+    rows from the device list made a retired instrument reachable only
+    by typing its URL, which is not where anybody looks for the one that
+    used to be in slot 3. It carries `retired_at` and orders them last.
     """
     sql = getattr(queries, sql_name)
     assert "retired_at IS NULL" in sql or "d.code = %(code)s" in sql
+
+
+def test_the_device_list_keeps_retired_devices_and_puts_them_last():
+    """
+    They are shown dimmed rather than removed. A device that was retired
+    this morning is the thing somebody is looking for this afternoon.
+    """
+    assert "retired_at IS NULL" not in queries.DEVICES
+    assert "d.retired_at" in queries.DEVICES
+    assert "ORDER  BY d.retired_at IS NOT NULL" in queries.DEVICES
+
+
+def test_a_retired_devices_own_page_still_answers():
+    """
+    The page used to 404 the moment a device was retired, destroying the
+    only route to the history the schema deliberately keeps - and
+    contradicting `device_limits`, whose docstring says a retired
+    device's page should still say what it was held to.
+    """
+    # The WHERE clause, not the whole statement: the comment above it
+    # quotes the predicate it used to carry, and should go on doing so.
+    where = queries.DEVICE.rsplit("WHERE", 1)[1]
+    assert "retired_at" not in where
+    assert "d.retired_at" in queries.DEVICE
 
 
 def test_the_trend_queries_are_parameterised_not_formatted():

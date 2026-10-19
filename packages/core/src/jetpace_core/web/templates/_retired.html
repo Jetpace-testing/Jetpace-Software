@@ -1,0 +1,43 @@
+{# What retiring a device did, or why it did not.
+
+   Same two-branch shape as _commissioned.html, and for the same reason:
+   a rejection carries the field it is about so the dialog can point at
+   it, and a success states the consequences rather than saying "done".
+   They are not obvious and they are not all reversible. #}
+
+{% if rejected %}
+  <div class="commission commission-bad" data-field="{{ rejected.field }}">
+    <strong>Not retired.</strong>
+    <p>{{ rejected.message }}</p>
+  </div>
+{% else %}
+  <div class="commission commission-good">
+    <strong>{{ device.code }} &mdash; {{ device.name }} is retired.</strong>
+    <dl>
+      <div>
+        <dt>Readings</dt>
+        <dd>Kept. They were measured; a room's history does not stop
+            being true because the instrument was replaced.</dd>
+      </div>
+      <div>
+        <dt>Its code</dt>
+        <dd><strong>{{ device.code }}</strong> can never be used again,
+            so an export from last year and a device commissioned next
+            year cannot be confused.</dd>
+      </div>
+      <div>
+        <dt>Slave {{ device.unit_id }}</dt>
+        <dd>Free. The instrument that replaces this one can take the
+            same position on the bus.</dd>
+      </div>
+      <div>
+        <dt>The poller</dt>
+        <dd>Stops reading it within {{ reload_seconds }} seconds, without
+            a restart.</dd>
+      </div>
+    </dl>
+    <div class="commission-actions">
+      <a class="primary-button" href="/devices">Back to the devices</a>
+    </div>
+  </div>
+{% endif %}

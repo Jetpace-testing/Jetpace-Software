@@ -228,7 +228,7 @@ def test_the_permissions_with_nothing_to_guard_yet_are_known():
         P.RECORD_SIGN, P.RECORD_REVIEW,  # no electronic signatures yet
         P.UPDATE_APPLY,                  # the updater has no UI
         P.AUDIT_READ,                    # the audit log has no page
-        P.DEVICE_EDIT, P.DEVICE_RETIRE,  # only `add` is built
+        P.DEVICE_EDIT,                   # nothing edits a device yet
         P.DIAGNOSTICS,                   # /healthz is unauthenticated
     }
     source = ""

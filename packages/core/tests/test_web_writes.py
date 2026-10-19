@@ -98,7 +98,7 @@ def test_a_limit_needs_at_least_one_set_point():
     """
     conn = FakeConn([])
     with pytest.raises(writes.WriteRejected) as exc:
-        writes.set_limit(conn, device_code="DP-001", param="dp",
+        writes.set_limit(conn, tenant_id=1, device_code="DP-001", param="dp",
                          low=None, high=None)
     assert "low or a high" in str(exc.value)
     assert conn.statements == [], "refused before any SQL was sent"
@@ -107,7 +107,7 @@ def test_a_limit_needs_at_least_one_set_point():
 def test_the_low_set_point_must_be_below_the_high_one():
     conn = FakeConn([])
     with pytest.raises(writes.WriteRejected) as exc:
-        writes.set_limit(conn, device_code="DP-001", param="dp",
+        writes.set_limit(conn, tenant_id=1, device_code="DP-001", param="dp",
                          low=10, high=5)
     assert exc.value.field == "low"
     # the numbers the operator typed, in the message, so they do not have
@@ -122,7 +122,7 @@ def test_equal_set_points_are_refused_and_not_stored_as_a_band():
     refuse than to diagnose from the resulting wall of alarms.
     """
     with pytest.raises(writes.WriteRejected):
-        writes.set_limit(FakeConn([]), device_code="DP-001", param="dp",
+        writes.set_limit(FakeConn([]), tenant_id=1, device_code="DP-001", param="dp",
                          low=5, high=5)
 
 
@@ -137,7 +137,7 @@ def test_a_blank_field_means_no_limit_on_that_side_and_not_zero():
     zero and alarm on every normal positive reading.
     """
     conn = conn_for_a_successful_limit()
-    writes.set_limit(conn, device_code="DP-001", param="dp",
+    writes.set_limit(conn, tenant_id=1, device_code="DP-001", param="dp",
                      low="-8", high="   ")
     params = conn.params_for("INSERT INTO device_limit")
     assert params["low"] == -8.0
@@ -146,7 +146,7 @@ def test_a_blank_field_means_no_limit_on_that_side_and_not_zero():
 
 def test_an_unparseable_set_point_is_a_sentence():
     with pytest.raises(writes.WriteRejected) as exc:
-        writes.set_limit(FakeConn([]), device_code="DP-001", param="dp",
+        writes.set_limit(FakeConn([]), tenant_id=1, device_code="DP-001", param="dp",
                          low="minus eight", high=None)
     assert "must be a number" in str(exc.value)
 
@@ -154,7 +154,7 @@ def test_an_unparseable_set_point_is_a_sentence():
 def test_an_unknown_device_is_a_sentence_not_a_foreign_key_violation():
     conn = FakeConn([None])          # the device lookup finds nothing
     with pytest.raises(writes.WriteRejected) as exc:
-        writes.set_limit(conn, device_code="NOPE", param="dp",
+        writes.set_limit(conn, tenant_id=1, device_code="NOPE", param="dp",
                          low=-8, high=-1)
     assert "NOPE" in str(exc.value)
     assert "INSERT INTO device_limit" not in " ".join(conn.statements)
@@ -163,7 +163,7 @@ def test_an_unknown_device_is_a_sentence_not_a_foreign_key_violation():
 def test_an_unknown_parameter_is_a_sentence():
     conn = FakeConn([DEVICE, None])
     with pytest.raises(writes.WriteRejected) as exc:
-        writes.set_limit(conn, device_code="DP-001", param="humidity",
+        writes.set_limit(conn, tenant_id=1, device_code="DP-001", param="humidity",
                          low=30, high=60)
     assert "humidity" in str(exc.value)
 
@@ -177,7 +177,7 @@ def test_a_limit_records_itself_in_the_audit_log():
     changes a set point without recording it.
     """
     conn = conn_for_a_successful_limit()
-    writes.set_limit(conn, device_code="DP-001", param="dp",
+    writes.set_limit(conn, tenant_id=1, device_code="DP-001", param="dp",
                      low=-8, high=-1, reason="commissioned")
     joined = " ".join(conn.statements)
     assert "INSERT INTO device_limit" in joined
@@ -190,7 +190,7 @@ def test_the_audit_row_says_what_the_limit_was_before():
     somebody made it -8".
     """
     conn = conn_for_a_successful_limit()
-    writes.set_limit(conn, device_code="DP-001", param="dp",
+    writes.set_limit(conn, tenant_id=1, device_code="DP-001", param="dp",
                      low=-8, high=-1)
     detail = conn.params_for("INSERT INTO audit")["detail"].obj
     assert detail["previous_low"] == -5.0
@@ -204,7 +204,7 @@ def test_the_first_limit_a_device_gets_has_no_previous_one():
     distinguishable from "somebody changed them afterwards".
     """
     conn = conn_for_a_successful_limit(previous=None)
-    writes.set_limit(conn, device_code="DP-001", param="dp", low=-8, high=-1)
+    writes.set_limit(conn, tenant_id=1, device_code="DP-001", param="dp", low=-8, high=-1)
     detail = conn.params_for("INSERT INTO audit")["detail"].obj
     assert detail["previous_low"] is None
     assert detail["previous_high"] is None
@@ -218,7 +218,7 @@ def test_the_actor_is_never_invented():
     somebody could later mistake for a person.
     """
     conn = conn_for_a_successful_limit()
-    writes.set_limit(conn, device_code="DP-001", param="dp", low=-8, high=-1)
+    writes.set_limit(conn, tenant_id=1, device_code="DP-001", param="dp", low=-8, high=-1)
     assert conn.params_for("INSERT INTO device_limit")["set_by"] is None
     assert conn.params_for("INSERT INTO audit")["actor"] is None
 
@@ -352,3 +352,113 @@ def test_a_retired_device_still_shows_what_it_was_held_to():
     Reached from the device's own page, where the history is the point.
     """
     assert "retired_at" not in queries.DEVICE_LIMITS
+
+
+# --- the tenant predicate -------------------------------------------------
+
+def test_resolving_a_device_for_a_limit_filters_on_the_tenant():
+    """
+    `device.code` is unique PER TENANT - UNIQUE (tenant_id, code) in
+    0001 - so resolving on the code alone returns whichever tenant's
+    device matched first, and a set point meant for one site lands on
+    another's instrument. Every table carries tenant_id and every query
+    filters on it; this one did not.
+    """
+    assert "d.tenant_id = %(tenant_id)s" in writes.RESOLVE_DEVICE
+
+    conn = conn_for_a_successful_limit()
+    writes.set_limit(conn, tenant_id=4, device_code="DP-001", param="dp",
+                     low=-8, high=-1)
+    assert conn.params_for("FROM device d")["tenant_id"] == 4
+
+
+def test_a_set_point_cannot_be_put_on_a_retired_device():
+    """
+    A specification cannot change for an instrument that is off the bus.
+    The table is append-only and ordered by set_at, so a new row would
+    claim a set point for a period in which nothing was measured.
+    """
+    from datetime import datetime
+
+    retired = {"id": 7, "tenant_id": 1,
+               "retired_at": datetime(2026, 10, 1, 9, 0)}
+    with pytest.raises(writes.WriteRejected) as exc:
+        writes.set_limit(FakeConn([retired]), tenant_id=1,
+                         device_code="DP-001", param="dp", low=-8, high=-1)
+    assert "retired" in str(exc.value)
+    assert "2026-10-01" in str(exc.value)
+
+
+# --- retiring a device ----------------------------------------------------
+
+RETIRED_ROW = {"code": "DP-001", "name": "Corridor", "unit_id": 3,
+               "retired_at": "2026-10-19T10:00:00+05:30"}
+
+
+def test_retiring_a_device_stamps_it_and_records_who_did_it():
+    """
+    The column has been in the schema since 0001 and nothing ever wrote
+    it; the permission guarded nothing and the audit verb was named in a
+    migration comment and never emitted.
+    """
+    conn = FakeConn([DEVICE, RETIRED_ROW, AUDITED])
+    out = writes.retire_device(conn, tenant_id=1, device_code="DP-001",
+                               reason="replaced by DP-004", actor="rishi")
+    assert out["code"] == "DP-001"
+    assert "UPDATE device" in " ".join(conn.statements)
+    audit = conn.params_for("INSERT INTO audit")
+    assert audit["action"] == "device.retire"
+    assert audit["actor"] == "rishi"
+    assert audit["subject"] == "DP-001"
+
+
+def test_retiring_a_device_requires_a_reason():
+    """
+    "Why is this instrument no longer being read" is the question
+    somebody asks a year later with a report in their hand, and
+    "removed from the panel" and "it was reading nonsense" lead to
+    different conclusions about the data either side of it.
+    """
+    with pytest.raises(writes.WriteRejected) as exc:
+        writes.retire_device(FakeConn([]), tenant_id=1,
+                             device_code="DP-001", reason="   ")
+    assert exc.value.field == "reason"
+
+
+def test_a_device_cannot_be_retired_twice():
+    from datetime import datetime
+
+    retired = {"id": 7, "tenant_id": 1,
+               "retired_at": datetime(2026, 10, 1, 9, 0)}
+    with pytest.raises(writes.WriteRejected) as exc:
+        writes.retire_device(FakeConn([retired]), tenant_id=1,
+                             device_code="DP-001", reason="again")
+    assert "already retired" in str(exc.value)
+
+
+def test_retiring_an_unknown_device_is_a_sentence():
+    with pytest.raises(writes.WriteRejected) as exc:
+        writes.retire_device(FakeConn([None]), tenant_id=1,
+                             device_code="NOPE", reason="x")
+    assert "no device 'NOPE'" in str(exc.value)
+
+
+def test_retiring_only_ever_sets_the_one_column():
+    """
+    `retired_at` is the fact; `enabled` is "temporarily off". Two
+    columns meaning the same thing is worse than one, and the poller
+    already drops a retired device through retired_at.
+    """
+    assert "enabled" not in writes.RETIRE_DEVICE
+    # The database's own clock, so the retirement instant is stamped by
+    # the same one that stamped the readings and the audit row.
+    assert "retired_at = now()" in writes.RETIRE_DEVICE
+    # Idempotent at the SQL level too, not only by the check above it.
+    assert "AND retired_at IS NULL" in writes.RETIRE_DEVICE
+
+
+def test_retiring_is_one_transaction_with_its_audit_row():
+    conn = FakeConn([DEVICE, RETIRED_ROW, AUDITED])
+    writes.retire_device(conn, tenant_id=1, device_code="DP-001",
+                         reason="x", actor="rishi")
+    assert conn.commits == 0, "writes never commit; the caller owns it"

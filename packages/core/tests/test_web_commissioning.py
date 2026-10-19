@@ -884,3 +884,120 @@ def test_two_type_changes_cannot_land_out_of_order():
     modal = (HERE / "templates" / "_modal.html").read_text(encoding="utf-8")
     picker = modal.split("<select", 1)[1].split(">", 1)[0]
     assert 'hx-sync="this:abort"' in picker
+
+
+# --- taking a device out of service ---------------------------------------
+
+def retire_client(monkeypatch, device=None, retired=None, rejected=None):
+    """The device page and its retire route, with the write stubbed."""
+    client_stubs(monkeypatch)
+    row = device or {
+        "code": "BN-001", "name": "Corridor", "unit_id": 3,
+        "commissioned_at": None, "gateway": "Bench", "host": "127.0.0.1",
+        "port": 502, "model": "BENCH-1", "model_revision": "2026-10",
+        "vendor": "Bench", "kind": "temperature",
+        "datasheet_ref": "fabricated", "site": "Plant", "timezone": "UTC",
+        "retired_at": None}
+    monkeypatch.setattr(q, "device", lambda conn, code: row)
+    if rejected is not None:
+        def fail(conn, **kwargs):
+            raise rejected
+        monkeypatch.setattr(w, "retire_device", fail)
+    else:
+        monkeypatch.setattr(
+            w, "retire_device",
+            lambda conn, **kwargs: retired or {
+                "code": kwargs["device_code"], "name": "Corridor",
+                "unit_id": 3, "retired_at": None})
+    return TestClient(create_app(DSN, product()),
+                      raise_server_exceptions=False)
+
+
+def test_retiring_says_what_it_did_to_the_code_the_address_and_the_poller(
+        monkeypatch):
+    """
+    None of the four consequences is obvious and one of them is
+    permanent, so the confirmation states them rather than saying done.
+    """
+    body = retire_client(monkeypatch).post(
+        "/devices/BN-001/retire", data={"reason": "replaced"}).text
+    assert "is retired" in body
+    assert "can never be used again" in body      # the code
+    assert "Slave 3" in body                      # the address, released
+    assert "10 seconds" in body                   # the poller
+
+
+def test_a_refused_retirement_names_the_field_it_is_about(monkeypatch):
+    client = retire_client(
+        monkeypatch, rejected=w.WriteRejected("Say why.", "reason"))
+    body = client.post("/devices/BN-001/retire", data={"reason": ""}).text
+    assert 'data-field="reason"' in body
+    assert "Not retired." in body
+
+
+def test_only_a_role_with_device_retire_may_retire_a_device():
+    source = Path(A_MODULE.__file__).read_text(encoding="utf-8")
+    body = source.split("def retire(", 1)[1][:400]
+    assert "permissions.DEVICE_RETIRE" in body
+
+
+def test_the_retire_control_is_on_the_device_page_and_not_the_list():
+    """
+    The list is swapped wholesale every ten seconds, so a confirm
+    affordance there can be re-rendered out from under somebody
+    mid-interaction - and a destructive control repeated across four
+    hundred rows, beside nothing but a code, is how the wrong
+    transmitter gets retired.
+    """
+    page = (HERE / "templates" / "device.html").read_text(encoding="utf-8")
+    listing = (HERE / "templates" / "_devices.html").read_text(
+        encoding="utf-8")
+    assert "/retire" in page
+    assert "/retire" not in listing
+
+
+def test_the_retire_button_is_not_the_one_under_the_cursor():
+    """
+    Two steps: the first reveals a required reason and a confirm that
+    names the device. A single click that retires an instrument is a
+    click somebody makes while meaning to click something else.
+    """
+    page = (HERE / "templates" / "device.html").read_text(encoding="utf-8")
+    assert 'id="retire-form" hidden' in page
+    assert 'id="retire-start"' in page
+    assert 'name="reason" type="text" required' in page
+
+
+def test_a_retired_device_is_not_offered_retirement_again(monkeypatch):
+    from datetime import datetime
+
+    device = {
+        "code": "BN-001", "name": "Corridor", "unit_id": 3,
+        "commissioned_at": None, "gateway": "Bench", "host": "127.0.0.1",
+        "port": 502, "model": "BENCH-1", "model_revision": "2026-10",
+        "vendor": "Bench", "kind": "temperature",
+        "datasheet_ref": "fabricated", "site": "Plant", "timezone": "UTC",
+        "retired_at": datetime(2026, 10, 1, 9, 0)}
+    client = retire_client(monkeypatch, device=device)
+    body = client.get("/devices/BN-001").text
+    assert "This device is retired" in body
+    assert 'id="retire-form"' not in body
+
+
+def test_a_retired_devices_page_still_opens(monkeypatch):
+    """
+    It used to 404 the moment a device was retired, destroying the only
+    route to the history the schema deliberately keeps.
+    """
+    from datetime import datetime
+
+    device = {
+        "code": "BN-001", "name": "Corridor", "unit_id": 3,
+        "commissioned_at": None, "gateway": "Bench", "host": "127.0.0.1",
+        "port": 502, "model": "BENCH-1", "model_revision": "2026-10",
+        "vendor": "Bench", "kind": "temperature",
+        "datasheet_ref": "fabricated", "site": "Plant", "timezone": "UTC",
+        "retired_at": datetime(2026, 10, 1, 9, 0)}
+    r = retire_client(monkeypatch, device=device).get("/devices/BN-001")
+    assert r.status_code == 200
+    assert "01 Oct 2026" in r.text

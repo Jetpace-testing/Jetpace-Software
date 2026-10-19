@@ -1264,6 +1264,35 @@ def create_app(dsn: str,
                 "limits": queries.device_limits(conn, code),
             })
 
+    # --- taking a device out of service -------------------------------
+    #
+    # ON THE DEVICE'S OWN PAGE, and deliberately nowhere else. The device
+    # list is swapped wholesale by HTMX every ten seconds, so a confirm
+    # affordance there can be re-rendered out from under somebody
+    # mid-interaction - and a destructive control repeated across four
+    # hundred rows, next to nothing but a code, is how the wrong
+    # transmitter gets retired. The page has the model, the datasheet
+    # reference, the gateway, the slave address and the last reading on
+    # screen, which is the context the decision needs.
+
+    @app.post("/devices/{code}/retire", response_class=HTMLResponse)
+    def retire(request: Request, code: str, reason: str = Form("")):
+        """Retire one device, with a reason, and say what that did."""
+        auth_routes.require(request, permissions.DEVICE_RETIRE)
+        try:
+            with queries.connect(dsn) as conn:
+                retired = writes.retire_device(
+                    conn, tenant_id=queries.tenant_id(conn),
+                    device_code=code, reason=reason,
+                    actor=auth_routes.principal_of(request).username)
+        except writes.WriteRejected as exc:
+            return templates.TemplateResponse(
+                request, "_retired.html", {"rejected": exc, "code": code})
+        return templates.TemplateResponse(request, "_retired.html", {
+            "device": retired,
+            "reload_seconds": DEVICE_RELOAD_SECONDS,
+        })
+
     @app.get("/partials/device-points/{code}", response_class=HTMLResponse)
     def partial_device_points(request: Request, code: str):
         auth_routes.require(request, permissions.VIEW)

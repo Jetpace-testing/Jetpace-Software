@@ -17,7 +17,11 @@
     </thead>
     <tbody>
       {% for d in devices %}
-      <tr>
+      {# Retired devices are listed, dimmed, after the live ones. Dropping
+         them made a device retired this morning reachable only by typing
+         its URL, which is not where anybody looks for the instrument that
+         used to be in slot 3. #}
+      <tr{% if d.retired_at %} class="is-retired"{% endif %}>
         <td><a class="code" href="/devices/{{ d.code }}">{{ d.code }}</a></td>
         <td>{{ d.name }}</td>
         <td class="dim">{{ d.gateway }}</td>
@@ -26,7 +30,9 @@
         <td class="num">{{ d.points }}</td>
         <td>
           {# A status is never colour alone: every pill carries its word. #}
-          {% if d.online %}
+          {% if d.retired_at %}
+            <span class="pill">retired</span>
+          {% elif d.online %}
             <span class="pill good">online</span>
           {% else %}
             <span class="pill critical">silent</span>
@@ -43,9 +49,9 @@
       {% else %}
       <tr>
         <td colspan="8" class="dim">
-          No devices are commissioned. The device list comes from
-          config/prototype.toml and is written to the database by
-          scripts/seed_prototype.py.
+          No devices are commissioned yet. Add one from the overview:
+          the form asks where the instrument is, what it is, and what it
+          is held to.
         </td>
       </tr>
       {% endfor %}

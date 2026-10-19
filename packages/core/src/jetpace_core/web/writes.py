@@ -111,10 +111,15 @@ def record(conn: psycopg.Connection, *, tenant_id: int, action: str,
 # typed and what the poller speaks - and because resolving them is also
 # the existence check. A limit against a device code that is not there is
 # a rejection with a readable message, not a foreign key violation.
+# FILTERED ON THE TENANT, because `device.code` is unique PER TENANT -
+# UNIQUE (tenant_id, code) in 0001. Without the predicate a code resolves
+# to whichever tenant's device happens to match, and a set point meant
+# for one site lands on another's instrument. Every table carries
+# tenant_id and every query filters on it (CLAUDE.md); this one did not.
 RESOLVE_DEVICE = """
 SELECT d.id, d.tenant_id, d.retired_at
 FROM   device d
-WHERE  d.code = %(code)s
+WHERE  d.code = %(code)s AND d.tenant_id = %(tenant_id)s
 """
 
 RESOLVE_PARAM = "SELECT id FROM parameter WHERE key = %(key)s"
@@ -138,12 +143,17 @@ LIMIT  1
 """
 
 
-def set_limit(conn: psycopg.Connection, *, device_code: str, param: str,
+def set_limit(conn: psycopg.Connection, *, tenant_id: int,
+              device_code: str, param: str,
               low: float | None, high: float | None,
               reason: str | None = None,
               set_by: str | None = None) -> dict:
     """
     Put a low and high set point on one parameter of one device.
+
+    `tenant_id` is a parameter and not a subquery so that a test can
+    assert it was passed. A device code is unique per tenant, so without
+    it this resolves to whichever tenant matched first.
 
     An INSERT, always - never an update, because the application role has
     no UPDATE on the table and because last month's readings have to stay
@@ -165,11 +175,21 @@ def set_limit(conn: psycopg.Connection, *, device_code: str, param: str,
             f"({high:g}).", "low")
 
     with conn.cursor() as cur:
-        cur.execute(RESOLVE_DEVICE, {"code": device_code})
+        cur.execute(RESOLVE_DEVICE, {"code": device_code,
+                                     "tenant_id": tenant_id})
         device = cur.fetchone()
         if device is None:
             raise WriteRejected(f"There is no device {device_code!r}.",
                                 "device")
+        if device["retired_at"] is not None:
+            # A specification cannot change for an instrument that is off
+            # the bus. The table is append-only and ordered by set_at, so
+            # a new row would claim a set point for a period in which
+            # nothing was measured.
+            raise WriteRejected(
+                f"{device_code} was retired on "
+                f"{device['retired_at']:%Y-%m-%d} and is not being read, so "
+                f"its set points cannot be changed.", "device")
         cur.execute(RESOLVE_PARAM, {"key": param})
         parameter = cur.fetchone()
         if parameter is None:
@@ -620,8 +640,8 @@ def commission_device(
     for sp in wanted:
         if sp.low is None and sp.high is None:
             continue
-        set_limit(conn, device_code=code, param=sp.param,
-                  low=sp.low, high=sp.high, set_by=actor,
+        set_limit(conn, tenant_id=tenant_id, device_code=code,
+                  param=sp.param, low=sp.low, high=sp.high, set_by=actor,
                   reason=reason or "commissioned")
 
     return dict(device) | {
@@ -629,3 +649,89 @@ def commission_device(
         "gateway_label": gateway["label"],
         "gateway_created": bool(gateway["created"]),
     }
+
+
+# ---------------------------------------------------------------------------
+# taking a device out of service
+#
+# THE COLUMN HAS BEEN THERE SINCE 0001 AND NOTHING EVER WROTE IT. The
+# permission existed and guarded nothing, the audit verb was named in a
+# migration's comment and never emitted, and the only way to remove a
+# device entered in error was an UPDATE typed by hand.
+#
+# Retiring is not deleting, and the difference is the point:
+#
+#   the readings stay. They were measured; a room's history does not
+#   stop being true because the instrument was replaced.
+#   the code stays taken. UNIQUE (tenant_id, code) is deliberately NOT
+#   partial, so a retired code can never be reused - a reading exported
+#   last year and a device commissioned this year must not share one.
+#   the slave address is released. `device_live_address` IS partial, so
+#   the replacement instrument can take the position on the bus.
+#   the poller drops it within one reload, because every acquisition
+#   query filters retired_at IS NULL.
+# ---------------------------------------------------------------------------
+
+RETIRE_DEVICE = """
+UPDATE device
+   SET retired_at = now()
+ WHERE id = %(device_id)s AND retired_at IS NULL
+RETURNING code, name, unit_id, retired_at
+"""
+
+
+def retire_device(conn: psycopg.Connection, *, tenant_id: int,
+                  device_code: str, reason: str,
+                  actor: str | None = None) -> dict:
+    """
+    Take a device out of service, with a reason, in one transaction.
+
+    The reason is REQUIRED and the audit row is written beside the
+    update, because "why is this instrument no longer being read" is the
+    question somebody asks a year later with a report in their hand -
+    and "it was removed from the panel" and "it was reading nonsense"
+    lead to different conclusions about the data either side of it.
+
+    The retirement instant comes from the database's `now()`, so it is
+    the same clock that stamped the readings and the audit row.
+
+    Does not commit.
+    """
+    reason = (reason or "").strip()
+    if not reason:
+        raise WriteRejected(
+            "Say why this device is being retired. It goes into the audit "
+            "record, and it is what explains the gap in its readings.",
+            "reason")
+
+    with conn.cursor() as cur:
+        cur.execute(RESOLVE_DEVICE, {"code": device_code,
+                                     "tenant_id": tenant_id})
+        device = cur.fetchone()
+        if device is None:
+            raise WriteRejected(f"There is no device {device_code!r}.",
+                                "device")
+        if device["retired_at"] is not None:
+            raise WriteRejected(
+                f"{device_code} was already retired on "
+                f"{device['retired_at']:%Y-%m-%d}.", "device")
+
+        cur.execute(RETIRE_DEVICE, {"device_id": device["id"]})
+        row = cur.fetchone()
+        if row is None:
+            # Retired between the read and the write. Rare, and a
+            # rejection rather than a crash.
+            raise WriteRejected(
+                f"{device_code} was retired by somebody else a moment ago.",
+                "device")
+
+    record(conn, tenant_id=tenant_id, action="device.retire",
+           subject=device_code, actor=actor,
+           detail={
+               "name": row["name"],
+               # The address this releases, so the audit row answers
+               # "what took its place on the bus" without a join.
+               "unit_id": row["unit_id"],
+               "reason": reason,
+           })
+    return dict(row)

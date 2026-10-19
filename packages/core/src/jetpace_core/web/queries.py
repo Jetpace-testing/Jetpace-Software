@@ -190,7 +190,8 @@ SELECT d.code,
        count(DISTINCT l.param)                       AS points,
        max(l.ts)                                     AS newest,
        bool_or(l.ts > now() - {OFFLINE_AFTER})       AS online,
-       GREATEST(0, EXTRACT(EPOCH FROM (now() - max(l.ts))))::int AS age_s
+       GREATEST(0, EXTRACT(EPOCH FROM (now() - max(l.ts))))::int AS age_s,
+       d.retired_at
 FROM   device d
 JOIN   gateway g      ON g.id = d.gateway_id
 JOIN   device_model m ON m.id = d.model_id
@@ -200,9 +201,11 @@ LEFT   JOIN LATERAL (
          WHERE  r.device_id = d.id
          ORDER  BY r.param, r.ts DESC
        ) l ON true
-WHERE  d.retired_at IS NULL
-GROUP  BY d.code, d.name, g.label, d.unit_id, m.code, m.kind
-ORDER  BY d.code
+GROUP  BY d.code, d.name, g.label, d.unit_id, m.code, m.kind, d.retired_at
+-- Retired devices last, and dimmed on the page. Dropping them from the
+-- list made a retired device reachable only by typing its URL, which is
+-- not where anybody looks for the instrument that used to be in slot 3.
+ORDER  BY d.retired_at IS NOT NULL, d.code
 """
 
 DEVICE = """
@@ -224,12 +227,18 @@ SELECT d.code,
        m.kind,
        m.datasheet_ref,
        s.name          AS site,
-       s.timezone
+       s.timezone,
+       -- RETIRED DEVICES ARE STILL FETCHED HERE. The predicate used to
+       -- be `AND d.retired_at IS NULL`, which meant the page 404'd the
+       -- moment a device was retired - destroying the only route to the
+       -- history 0001 keeps and `device_limits` promises in its own
+       -- docstring. The column comes back so the page can say so.
+       d.retired_at
 FROM   device d
 JOIN   gateway g      ON g.id = d.gateway_id
 JOIN   device_model m ON m.id = d.model_id
 JOIN   site s         ON s.id = d.site_id
-WHERE  d.code = %(code)s AND d.retired_at IS NULL
+WHERE  d.code = %(code)s
 """
 
 # What this device actually reports, newest value for each. Driven by the

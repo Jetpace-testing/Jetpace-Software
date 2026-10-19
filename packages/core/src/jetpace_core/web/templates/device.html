@@ -26,7 +26,21 @@
            <dd>{% if device.commissioned_at %}
                  {{ device.commissioned_at.strftime('%d %b %Y') }}
                {% else %}<span class="dim">not recorded</span>{% endif %}</dd></div>
+      {% if device.retired_at %}
+        <div><dt>Retired</dt>
+             <dd class="retired-on">{{
+               device.retired_at.strftime('%d %b %Y') }}</dd></div>
+      {% endif %}
     </dl>
+    {% if device.retired_at %}
+      {# The page still opens, and says so. It used to 404 the moment a
+         device was retired, which destroyed the only route to the
+         history the schema deliberately keeps. #}
+      <p class="foot-note retired-note">
+        This device is retired. Its readings are kept and its trend below
+        still draws; nothing is being added to them.
+      </p>
+    {% endif %}
     {% if device.datasheet_ref %}
       <p class="foot-note">
         Register map pinned to <strong>{{ device.datasheet_ref }}</strong>.
@@ -96,9 +110,77 @@
     <div class="table-view tablewrap" id="trend-table" hidden></div>
   </div>
 </section>
+
+{# ---------------- taking it out of service ----------------
+
+   HERE AND NOT ON THE DEVICE LIST, deliberately. That list is swapped
+   wholesale every ten seconds, so a confirm affordance on it can be
+   re-rendered out from under somebody mid-interaction - and a
+   destructive control repeated across four hundred rows, beside nothing
+   but a code, is how the wrong transmitter gets retired. This page has
+   the model, the datasheet, the bus, the slave address and the last
+   reading on screen, which is the context the decision needs.
+
+   Two steps, no modal: the button reveals the reason and a confirm that
+   names the device. The reason is required by the server too - it is
+   what explains the gap in the readings a year from now. #}
+{% if may(request, PERM.DEVICE_RETIRE) and not device.retired_at %}
+<section class="retire">
+  <h2>Out of service</h2>
+  <div class="card" id="retire-card">
+    <p>
+      Retiring {{ device.code }} keeps its readings and its set points,
+      frees slave {{ device.unit_id }} on {{ device.gateway }} for a
+      replacement, and stops the poller reading it. Its code can never be
+      used again.
+    </p>
+    <button class="toggle" type="button" id="retire-start">
+      Retire this device&hellip;</button>
+
+    <form id="retire-form" hidden
+          hx-post="/devices/{{ device.code }}/retire"
+          hx-target="#retire-result" hx-swap="innerHTML">
+      <label class="field">
+        <span>Why</span>
+        <input name="reason" type="text" required autocomplete="off"
+               placeholder="Removed from the panel / replaced by RH-004">
+      </label>
+      <div class="retire-actions">
+        <button type="button" id="retire-cancel">Cancel</button>
+        <button type="submit" class="danger-button">
+          Retire {{ device.code }}</button>
+      </div>
+    </form>
+    <div id="retire-result" aria-live="polite"></div>
+  </div>
+</section>
+{% endif %}
 {% endblock %}
 
 {% block scripts %}
+<script>
+// The retire affordance: two steps, so the destructive button is never
+// the one under the cursor when the page loads.
+(function () {
+  var start = document.getElementById("retire-start");
+  var form = document.getElementById("retire-form");
+  var cancel = document.getElementById("retire-cancel");
+  if (!start || !form) { return; }
+  start.addEventListener("click", function () {
+    form.hidden = false;
+    start.hidden = true;
+    var why = form.querySelector("[name=reason]");
+    if (why) { why.focus(); }
+  });
+  if (cancel) {
+    cancel.addEventListener("click", function () {
+      form.hidden = true;
+      start.hidden = false;
+      form.reset();
+    });
+  }
+})();
+</script>
 <script>
 ready(function () {
   var CODE = {{ device.code | tojson }};

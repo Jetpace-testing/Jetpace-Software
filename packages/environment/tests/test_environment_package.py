@@ -83,3 +83,34 @@ def test_the_package_names_no_instrument():
         lowered = source.lower()
         for gone in ("idp", "dp_pv", "never_write", "'dp'", '"dp"'):
             assert gone not in lowered, f"{path.name} still mentions {gone}"
+
+
+# --- what it will sell, and cannot yet ------------------------------------
+
+def test_the_product_declares_the_instruments_it_is_waiting_for():
+    """
+    Declared, not half-built. A `Planned` carries a name and nothing
+    else, because the addresses to read come from a register map and a
+    type without one cannot be commissioned at all - so the form shows
+    these greyed rather than offering an entry that would be refused.
+
+    What each is waiting for is a row in docs/instruments.md.
+    """
+    from jetpace_environment.web import product
+
+    planned = {p.code for p in product().planned}
+    assert {"iRHT-320", "DPT-100", "RTD-100"} <= planned
+
+
+def test_nothing_planned_is_also_sold():
+    """
+    A transcribed instrument moves OUT of PLANNED. Leaving it in both
+    would put the same model in the dropdown twice, once selectable and
+    once greyed.
+    """
+    from jetpace_environment.web import product
+
+    p = product()
+    sold = {t.code for t in p.device_types}
+    waiting = {x.code for x in p.planned}
+    assert not (sold & waiting), sold & waiting

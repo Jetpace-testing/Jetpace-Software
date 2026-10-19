@@ -915,6 +915,15 @@ a.code { font-variant-numeric: tabular-nums; font-weight: 600; }
               font-size: var(--t-9); background: var(--canvas); color: var(--ink);
               border: 1px solid var(--border); border-radius: 4px;
               padding: 1px 5px; }
+/* Instruments this install will be able to commission and cannot yet.
+ * Shown only on the empty-catalogue screen, where "nothing to commission"
+ * on its own cannot be told apart from "your instrument is unsupported". */
+.planned-types { margin: 0 0 4px; padding: 0 0 0 2px; list-style: none; }
+.planned-types li { color: var(--ink-2); font-size: var(--t-9);
+                    padding: 3px 0; }
+.planned-types strong { color: var(--ink); font-weight: 600;
+                        margin-right: 6px; }
+
 .modal-actions { border-top: 1px solid var(--border); padding-top: 15px;
                  margin-top: 18px; display: flex; justify-content: flex-end;
                  gap: 8px; }

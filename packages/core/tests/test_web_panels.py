@@ -524,14 +524,21 @@ def test_the_modal_collects_exactly_what_an_operator_knows(monkeypatch):
     address on a device, because the addresses come from a map pinned to
     a datasheet by a test in the product package.
     """
+    from bench import BENCH
+
     stub(monkeypatch)
     app = create_app(DSN, _one_product())
     body = TestClient(app).get("/").text
     modal = body.split('id="modal-add-device"', 1)[1]
 
-    for field in ("host", "port", "unit_id", "model", "code", "name",
-                  "low", "high"):
+    for field in ("host", "port", "unit_id", "model", "code", "name"):
         assert f'name="{field}"' in modal, field
+    # The set point fields are named after the parameter they belong to,
+    # so a device held to two bands has two pairs and a rejection can
+    # redden the right one.
+    for point in BENCH.limit_points():
+        assert f'name="low_{point.param}"' in modal, point.param
+        assert f'name="high_{point.param}"' in modal, point.param
     for forbidden in ("address", "register", "datasheet_number", "kind",
                       "scale"):
         assert f'name="{forbidden}"' not in modal, forbidden
@@ -564,7 +571,7 @@ def test_the_form_carries_no_explanatory_hints(monkeypatch):
 
     # The labels, the units and the in-field examples stay: those are
     # what the field IS, not an explanation of it.
-    for kept in ('name="host"', 'name="unit_id"', 'name="low"',
+    for kept in ('name="host"', 'name="unit_id"', 'name="low_pv"',
                  "Converter address", "Slave", "LSP",
                  'placeholder="192.168.1.50"'):
         assert kept in modal, kept

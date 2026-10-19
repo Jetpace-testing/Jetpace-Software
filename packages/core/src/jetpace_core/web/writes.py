@@ -38,6 +38,8 @@ visit, not a bug report.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import psycopg
@@ -259,6 +261,29 @@ def _as_int(value: Any, what: str) -> int:
 # It is also, deliberately, the same set of statements seed_prototype.py
 # runs from the TOML file. The two paths have to produce identical rows or
 # the dashboard and the gateway sheet describe different installs.
+@dataclass(frozen=True)
+class SetPoint:
+    """
+    One parameter's low and high, and the fields they were typed into.
+
+    The field names travel with the values because a rejection has to
+    name the box it is about. With one pair of inputs on the form "low"
+    was enough; with a pair per parameter, `low_rh` is what reddens the
+    humidity field rather than the temperature one above it.
+
+    `low` and `high` arrive as whatever the form posted - "" for a blank
+    - and are normalised by `commission_device`, not here, so that this
+    stays a carrier and the one place that turns "" into None stays one
+    place.
+    """
+
+    param: str
+    low: Any = None
+    high: Any = None
+    low_field: str = "low"
+    high_field: str = "high"
+
+
 # ---------------------------------------------------------------------------
 
 SITES = "SELECT id, tenant_id, name FROM site ORDER BY id"
@@ -407,8 +432,7 @@ def commission_device(
         host: str,
         port: Any,
         unit_id: Any,
-        low: Any = None,
-        high: Any = None,
+        set_points: Sequence["SetPoint"] = (),
         gateway_label: str = "",
         answered: bool = True,
         detail: str = "",
@@ -446,11 +470,17 @@ def commission_device(
     # with a message about set points, for a device whose operator had
     # deliberately not given any.
     #
-    # Converting here rather than inside the test also means a
-    # mistyped figure is reported against ITS OWN field rather than as
-    # "low", which is what set_limit would have said for either.
-    low = _as_number(low, "low set point", "low")
-    high = _as_number(high, "high set point", "high")
+    # Converting here rather than inside the test also means a mistyped
+    # figure is reported against ITS OWN field - `low_rh` and not `low` -
+    # which is what reddens the right box in a form with a pair of
+    # fields per parameter.
+    wanted = [
+        SetPoint(param=sp.param,
+                 low=_as_number(sp.low, "low set point", sp.low_field),
+                 high=_as_number(sp.high, "high set point", sp.high_field),
+                 low_field=sp.low_field, high_field=sp.high_field)
+        for sp in set_points
+    ]
 
     if not devices_.CODE.fullmatch(code):
         raise WriteRejected(
@@ -579,13 +609,19 @@ def commission_device(
                "reason": reason or None,
            })
 
-    if low is not None or high is not None:
-        if device_type.limits is None:
-            raise WriteRejected(
-                f"{device_type.code} has no measured parameter to put a set "
-                f"point on.", "low")
-        set_limit(conn, device_code=code, param=device_type.limits,
-                  low=low, high=high, set_by=actor,
+    # ONE AUDITED ROW PER PARAMETER THAT GOT A SPECIFICATION. A device
+    # held to a temperature band and a humidity band has two set points,
+    # two rows and two audit entries, because they can be revised
+    # independently and a single row could not say which was changed.
+    #
+    # After the device.add row above, and inside the same transaction, so
+    # a refused set point takes the whole commission with it rather than
+    # leaving a device nobody specified.
+    for sp in wanted:
+        if sp.low is None and sp.high is None:
+            continue
+        set_limit(conn, device_code=code, param=sp.param,
+                  low=sp.low, high=sp.high, set_by=actor,
                   reason=reason or "commissioned")
 
     return dict(device) | {

@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from jetpace_core.web.products import Product
 
-from .. import DEVICE_TYPES
+from .. import DEVICE_TYPES, PLANNED
 
 
 def product() -> Product:
@@ -39,4 +39,5 @@ def product() -> Product:
         slug="environment",
         label="Environment",
         device_types=DEVICE_TYPES,
+        planned=PLANNED,
     )

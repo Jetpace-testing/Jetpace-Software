@@ -52,6 +52,18 @@
         that sells the instrument &mdash; check
         <code>config/products.toml</code>.
       </p>
+      {# What is coming, when there is anything. This is the state the
+         message above is least useful in: an engineer told only that
+         nothing can be commissioned cannot tell "not supported" from
+         "not transcribed yet". #}
+      {% if planned_types %}
+        <p>These are declared and waiting for their register maps:</p>
+        <ul class="planned-types">
+          {% for p in planned_types %}
+            <li><strong>{{ p.code }}</strong> {{ p.label }}</li>
+          {% endfor %}
+        </ul>
+      {% endif %}
       <div class="modal-actions">
         <button type="button" data-modal-close>Close</button>
       </div>
@@ -98,6 +110,17 @@
                 {% for code, entry in device_types.items() %}
                   <option value="{{ code }}">{{ entry.title }}</option>
                 {% endfor %}
+                {# Instruments this install will sell and cannot yet,
+                   because nobody has transcribed the datasheet. DISABLED,
+                   not hidden: an engineer looking for their transmitter
+                   should find out that it is coming rather than conclude
+                   it is unsupported - and disabled means the browser
+                   will not let them choose one the server would have to
+                   refuse. #}
+                {% for p in planned_types or [] %}
+                  <option value="{{ p.code }}" disabled>{{ p.title }}
+                    &mdash; awaiting its register map</option>
+                {% endfor %}
               </select>
               {{ ico.icon('chevron') }}
             </span>
@@ -117,21 +140,34 @@
         </label>
       </fieldset>
 
-      <fieldset id="limit-fields">
-        <legend>Set points <em>optional</em></legend>
-        <div class="field-row">
-          <label class="field">
-            <span>LSP <small class="unit">{{ limit_unit }}</small></span>
-            <input name="low" type="text" inputmode="decimal"
-                   autocomplete="off" placeholder="e.g. -20">
-          </label>
-          <label class="field">
-            <span>HSP <small class="unit">{{ limit_unit }}</small></span>
-            <input name="high" type="text" inputmode="decimal"
-                   autocomplete="off" placeholder="e.g. -5">
-          </label>
-        </div>
-      </fieldset>
+      {# A pair per parameter that carries a specification, in the same
+         order as the device page lays out its reading tiles. A type
+         whose points carry none renders no fieldset at all, rather than
+         two boxes with no unit beside them.
+
+         The field NAMES carry the parameter - low_temp, high_rh - so a
+         rejection can redden the box it is about. #}
+      {% if device_type and device_type.limit_points() %}
+        <fieldset id="limit-fields">
+          <legend>Set points <em>optional</em></legend>
+          {% for point in device_type.limit_points() %}
+            <div class="field-row">
+              <label class="field">
+                <span>{{ point.label }} LSP
+                  <small class="unit">{{ point.unit }}</small></span>
+                <input name="low_{{ point.param }}" type="text"
+                       inputmode="decimal" autocomplete="off">
+              </label>
+              <label class="field">
+                <span>{{ point.label }} HSP
+                  <small class="unit">{{ point.unit }}</small></span>
+                <input name="high_{{ point.param }}" type="text"
+                       inputmode="decimal" autocomplete="off">
+              </label>
+            </div>
+          {% endfor %}
+        </fieldset>
+      {% endif %}
 
       <div class="probe-row">
         <button type="button" class="ghost-button"

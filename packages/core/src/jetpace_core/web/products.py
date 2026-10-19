@@ -229,6 +229,17 @@ class Product:
     # register map in the repository yet.
     device_types: tuple[devices_.DeviceType, ...] = ()
 
+    # Optional: instruments this product will sell and cannot yet,
+    # because nobody has transcribed the datasheet. Shown in the form,
+    # greyed and unselectable, so an engineer can see what is coming
+    # instead of wondering whether their instrument is supported.
+    #
+    # Kept apart from `device_types` rather than being a flag on one,
+    # because a type with no register map cannot exist: the addresses to
+    # read come from the map. See devices.Planned, and docs/instruments.md
+    # for the list and what each one is waiting for.
+    planned: tuple[devices_.Planned, ...] = ()
+
     def __post_init__(self) -> None:
         if not self.slug.isascii() or not self.slug.isalpha():
             raise ValueError(
@@ -336,6 +347,11 @@ def device_types(
                     f"register map per model, or a device would be read with "
                     f"whichever product happened to load first.")
             collected[device_type.code] = (product.slug, device_type)
+    # Two instruments may share a parameter key only if they agree about
+    # it - there is one `parameter` row per key for the whole install.
+    # See devices.check_parameters for what goes wrong otherwise.
+    devices_.check_parameters({code: entry[1]
+                               for code, entry in collected.items()})
     return collected
 
 

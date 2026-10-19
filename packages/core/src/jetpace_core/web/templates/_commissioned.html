@@ -30,7 +30,13 @@
       </div>
       <div>
         <dt>Set points</dt>
-        <dd>{% if limit_text %}{{ limit_text }}{% else %}none{% endif %}</dd>
+        {# One line per parameter. A transmitter held to a temperature
+           band and a humidity band has two specifications, and running
+           them together is how somebody reads a humidity set point in
+           degrees. #}
+        <dd>{% if limit_lines %}{% for line in limit_lines %}
+              {{ line.label }}: {{ line.text }}{% if not loop.last %}<br>{% endif %}
+            {% endfor %}{% else %}none{% endif %}</dd>
       </div>
     </dl>
     <p>

@@ -54,9 +54,8 @@ class Unreachable:
     detail = "nothing answered at 10.0.0.9:502."
 
 
-@pytest.fixture
-def client(monkeypatch):
-    """The overview, with every query it runs answered in memory."""
+def client_stubs(monkeypatch):
+    """Answer every query the overview runs, in memory."""
     class _Conn:
         def __enter__(self): return self
         def __exit__(self, *exc): return False
@@ -79,6 +78,12 @@ def client(monkeypatch):
     monkeypatch.setattr(q, "device_limits", lambda conn, code: {})
     monkeypatch.setattr(w, "suggest_code",
                         lambda conn, tenant_id, prefix: f"{prefix}-004")
+
+
+@pytest.fixture
+def client(monkeypatch):
+    """The overview, with one fabricated instrument in its catalogue."""
+    client_stubs(monkeypatch)
     return TestClient(create_app(DSN, product()), raise_server_exceptions=False)
 
 
@@ -101,7 +106,7 @@ def commission(monkeypatch, client, captured=None, **over):
     monkeypatch.setattr(w, "commission_device", fake_commission)
     body = {"host": "127.0.0.1", "port": "5021", "unit_id": "5",
             "model": "BENCH-1", "code": "DP-010", "name": "Gowning room",
-            "low": "-20", "high": "-5"}
+            "low_pv": "-20", "high_pv": "-5"}
     body.update(over)
     return client.post("/partials/commission", data=body)
 
@@ -552,3 +557,244 @@ def test_the_table_survives_a_device_with_no_reading_yet(client, monkeypatch):
     body = client.get("/").text
     assert "DP-009" in body
     assert "Offline" in body
+
+
+# --- a set point pair per parameter ---------------------------------------
+
+def pair_client(monkeypatch):
+    """A dashboard whose catalogue holds the two-parameter instrument."""
+    from bench import bench_pair_product
+
+    client_stubs(monkeypatch)
+    return TestClient(create_app(DSN, bench_pair_product()),
+                      raise_server_exceptions=False)
+
+
+def test_each_limited_parameter_gets_its_own_pair_of_fields(monkeypatch):
+    """
+    A transmitter held to a temperature band AND a humidity band needs
+    two pairs. One pair covering a device cannot say which quantity it
+    is about, and the unit beside it would be wrong for one of them.
+    """
+    body = pair_client(monkeypatch).get("/").text
+    modal = body.split('id="modal-add-device"', 1)[1]
+    for param in ("alpha", "beta"):
+        assert f'name="low_{param}"' in modal
+        assert f'name="high_{param}"' in modal
+
+
+def test_a_set_point_field_is_labelled_with_its_own_parameter_and_unit(
+        monkeypatch):
+    body = pair_client(monkeypatch).get("/").text
+    modal = body.split('id="modal-add-device"', 1)[1]
+    assert "Alpha LSP" in modal and "Beta LSP" in modal
+
+
+def test_each_limited_parameter_becomes_its_own_set_point(monkeypatch):
+    """
+    Two parameters, two `SetPoint`s reaching the write - which becomes
+    two append-only rows and two audit entries, because they are revised
+    independently.
+    """
+    captured = {}
+    set_probe(monkeypatch, Answered)
+
+    def fake(conn, **kwargs):
+        captured.update(kwargs)
+        return {"id": 1, "code": kwargs["code"], "name": kwargs["name"],
+                "unit_id": 5, "scan_class": "instantaneous",
+                "commissioned_at": None, "gateway_label": "B",
+                "gateway_created": False}
+
+    monkeypatch.setattr(w, "commission_device", fake)
+    pair_client(monkeypatch).post("/partials/commission", data={
+        "host": "127.0.0.1", "port": "5021", "unit_id": "5",
+        "model": "BENCH-2", "code": "BP-001", "name": "Room",
+        "low_alpha": "18", "high_alpha": "24",
+        "low_beta": "30", "high_beta": "60"})
+
+    got = {sp.param: (sp.low, sp.high) for sp in captured["set_points"]}
+    assert got == {"alpha": ("18", "24"), "beta": ("30", "60")}
+
+
+def test_a_rejected_set_point_names_that_parameters_own_field(monkeypatch):
+    """
+    The modal reddens a field by name. With a pair per parameter, a
+    humidity rejection naming "low" would redden the temperature box
+    above it.
+    """
+    set_probe(monkeypatch, Answered)
+    body = pair_client(monkeypatch).post("/partials/commission", data={
+        "host": "127.0.0.1", "port": "5021", "unit_id": "5",
+        "model": "BENCH-2", "code": "BP-001", "name": "Room",
+        "low_beta": "not a number"}).text
+    assert 'data-field="low_beta"' in body
+
+
+def test_a_set_point_for_a_parameter_this_type_does_not_read_is_refused(
+        monkeypatch):
+    """
+    Somebody typed a specification against a quantity this instrument
+    does not measure. Dropping it silently loses a specification.
+    """
+    set_probe(monkeypatch, Answered)
+    body = pair_client(monkeypatch).post("/partials/commission", data={
+        "host": "127.0.0.1", "port": "5021", "unit_id": "5",
+        "model": "BENCH-2", "code": "BP-001", "name": "Room",
+        "low_nonsense": "5"}).text
+    assert "does not measure" in body
+    assert 'data-field="low_nonsense"' in body
+
+
+def test_a_blank_field_left_over_from_another_type_is_ignored(monkeypatch):
+    """
+    The dropdown offered another type a moment ago and the browser still
+    has its empty boxes. The operator never saw them, so there is
+    nothing to report - unlike a field somebody typed into.
+    """
+    captured = {}
+    set_probe(monkeypatch, Answered)
+
+    def fake(conn, **kwargs):
+        captured.update(kwargs)
+        return {"id": 1, "code": kwargs["code"], "name": kwargs["name"],
+                "unit_id": 5, "scan_class": "instantaneous",
+                "commissioned_at": None, "gateway_label": "B",
+                "gateway_created": False}
+
+    monkeypatch.setattr(w, "commission_device", fake)
+    r = pair_client(monkeypatch).post("/partials/commission", data={
+        "host": "127.0.0.1", "port": "5021", "unit_id": "5",
+        "model": "BENCH-2", "code": "BP-001", "name": "Room",
+        "low_leftover": "", "high_leftover": ""})
+    assert r.status_code == 200
+    assert {sp.param for sp in captured["set_points"]} == {"alpha", "beta"}
+
+
+def test_the_commissioning_route_does_not_run_on_the_event_loop():
+    """
+    IT READS THE FORM THROUGH A DEPENDENCY SO IT CAN STAY SYNC.
+
+    Making the route `async def` to await request.form() would put a
+    blocking Modbus probe - held under the probe lock - and a blocking
+    database transaction on the event loop, with every five-second panel
+    poll queued behind a commissioning click.
+    """
+    import inspect
+
+    import jetpace_core.web.app as A
+
+    source = Path(A.__file__).read_text(encoding="utf-8")
+    signature = source.split("def partial_commission(", 1)[1][:700]
+    assert "async def partial_commission" not in source
+    assert "Depends(set_point_fields)" in signature
+    assert inspect.iscoroutinefunction(A.set_point_fields)
+
+
+def test_a_device_that_answered_on_only_some_registers_needs_a_reason(
+        monkeypatch):
+    """
+    FOUND BY ADDING A SECOND PARAMETER. `probe` reports answered=True
+    when some registers read and a later one does not - unreachable with
+    a one-parameter instrument. With two, a transmitter whose second
+    register is silent would commission as answering, with no reason
+    asked for and only the first value in the audit record.
+    """
+    class Half:
+        reachable, answered = True, True
+        detail = "register 1 did not read."
+
+        class _V:
+            def __init__(self, param, value):
+                self.param, self.value = param, value
+
+        values = (_V("alpha", 20.0),)
+
+    captured = {}
+    set_probe(monkeypatch, Half)
+
+    def fake(conn, **kwargs):
+        captured.update(kwargs)
+        return {"id": 1, "code": kwargs["code"], "name": kwargs["name"],
+                "unit_id": 5, "scan_class": "instantaneous",
+                "commissioned_at": None, "gateway_label": "B",
+                "gateway_created": False}
+
+    monkeypatch.setattr(w, "commission_device", fake)
+    pair_client(monkeypatch).post("/partials/commission", data={
+        "host": "127.0.0.1", "port": "5021", "unit_id": "5",
+        "model": "BENCH-2", "code": "BP-001", "name": "Room"})
+    assert captured["answered"] is False, (
+        "a half-answering device must be treated as not answering, so the "
+        "write asks for a reason")
+
+
+# --- instruments this install cannot commission yet ------------------------
+
+def test_a_planned_instrument_is_shown_but_cannot_be_chosen(monkeypatch):
+    """
+    An engineer looking for their transmitter should learn that it is
+    coming, not conclude it is unsupported. Disabled rather than hidden,
+    and disabled rather than selectable: there is no register map behind
+    it, so the server would only refuse it.
+    """
+    from jetpace_core import devices
+    from jetpace_core.web import products as P
+
+    client_stubs(monkeypatch)
+    product = P.Product(slug="demo", label="Demo",
+                        device_types=(BENCH,),
+                        planned=(devices.Planned("SOON-1", "Not here yet"),))
+    body = TestClient(create_app(DSN, [product])).get("/").text
+    modal = body.split('id="modal-add-device"', 1)[1]
+
+    assert "SOON-1" in modal and "Not here yet" in modal
+    tag = modal.split('value="SOON-1"', 1)[1].split(">", 1)[0]
+    assert "disabled" in tag
+    assert "awaiting its register map" in modal
+
+
+def test_a_planned_instrument_cannot_be_commissioned(monkeypatch):
+    """
+    The dropdown disables it; the server refuses it anyway. A disabled
+    option is a browser's courtesy, not a rule.
+    """
+    from jetpace_core import devices
+    from jetpace_core.web import products as P
+
+    client_stubs(monkeypatch)
+    product = P.Product(slug="demo", label="Demo",
+                        device_types=(BENCH,),
+                        planned=(devices.Planned("SOON-1", "Not here yet"),))
+    client = TestClient(create_app(DSN, [product]),
+                        raise_server_exceptions=False)
+    set_probe(monkeypatch, Answered)
+    body = client.post("/partials/commission", data={
+        "host": "127.0.0.1", "port": "5021", "unit_id": "5",
+        "model": "SOON-1", "code": "X-1", "name": "x"}).text
+    assert "not a device type this install carries" in body
+
+
+def test_an_install_with_no_maps_still_says_what_is_coming(monkeypatch):
+    """
+    THE STATE THE "nothing to commission" MESSAGE IS WEAKEST IN. Told
+    only that no device type exists, an engineer cannot tell "your
+    instrument is not supported" from "nobody has transcribed its
+    datasheet yet" - and the second is the truth on a fresh install.
+    """
+    from jetpace_core import devices
+    from jetpace_core.web import products as P
+
+    client_stubs(monkeypatch)
+    product = P.Product(slug="demo", label="Demo",
+                        planned=(devices.Planned("SOON-1", "Not here yet"),))
+    import re
+
+    body = TestClient(create_app(DSN, [product])).get("/").text
+    modal = re.sub(r"\s+", " ", body.split('id="modal-add-device"', 1)[1])
+
+    assert "no device type to commission" in modal
+    assert "waiting for their register maps" in modal
+    assert "SOON-1" in modal and "Not here yet" in modal
+    # Still no form: there is nothing to commission against.
+    assert 'id="add-device-form"' not in modal

@@ -15,8 +15,9 @@ from pathlib import Path
 
 import pytest
 
-from jetpace_core.devices import (AGGREGATIONS, KINDS, DeviceModel, DeviceType,
-                                  Point, Register)
+from jetpace_core.devices import (AGGREGATIONS, KINDS, DeviceModel,
+                                  DeviceType, Point, Register,
+                                  check_parameters)
 from jetpace_core.web import products as P
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -92,22 +93,50 @@ def test_two_registers_cannot_map_to_one_parameter():
     assert "same parameter" in str(exc.value)
 
 
-def test_limits_must_be_on_a_parameter_the_type_actually_reads():
+def test_a_set_point_cannot_be_asked_for_on_something_unread():
     """
-    Otherwise the form collects LSP and HSP for something that will never
-    produce a reading to compare against them.
+    THIS USED TO BE A VALIDATION AND IS NOW STRUCTURAL.
+
+    A type used to name the parameter its set points applied to, which
+    could name one it did not read - so `__post_init__` checked for it.
+    The flag lives on the point itself now, so there is nothing to
+    disagree with: a limited parameter is a parameter, by construction.
+    What is left to assert is that the two stay in step.
     """
-    with pytest.raises(ValueError) as exc:
-        a_type(limits="humidity")
-    assert "humidity" in str(exc.value)
+    t = a_type()
+    for point in t.limit_points():
+        assert point in t.points
 
 
-def test_a_type_may_have_no_limits_at_all():
+def test_a_type_may_put_set_points_on_more_than_one_parameter():
     """
-    A meter with no specification is an ordinary case; the form hides the
-    set point fields rather than demanding two numbers nobody has.
+    A cleanroom transmitter is held to a temperature band AND a humidity
+    band. They are revised independently, so they are two set points,
+    two rows and two audit entries - not one pair covering a device.
     """
-    assert a_type(limits=None).limit_point() is None
+    t = a_type(points=(Point("temp", "pv", "Temperature", "C", limited=True),
+                       Point("rh", "selector", "Humidity", "%",
+                             limited=True)))
+    assert [p.param for p in t.limit_points()] == ["temp", "rh"]
+
+
+def test_the_set_point_fields_follow_the_order_of_the_readings():
+    """
+    The device page lays its reading tiles out in point order. A form
+    whose fields come in a different order from the page they describe
+    is a form somebody fills in wrongly once.
+    """
+    t = a_type(points=(Point("b", "pv", "B", "u", limited=True),
+                       Point("a", "selector", "A", "v", limited=True)))
+    assert [p.param for p in t.limit_points()] == ["b", "a"]
+
+
+def test_a_type_may_have_no_set_points_at_all():
+    """
+    A meter with no specification is an ordinary case; the form renders
+    no set point fieldset rather than two boxes with no unit beside them.
+    """
+    assert a_type().limit_points() == ()
 
 
 def test_an_unknown_kind_is_refused_before_the_insert_can_fail():
@@ -202,3 +231,79 @@ def test_the_dropdown_label_names_the_model_and_what_it_is():
 
 def test_a_type_with_no_label_still_has_something_to_show():
     assert a_type().title == "FAKE-1"
+
+
+# --- a parameter key is an identifier in five places ----------------------
+
+def test_a_parameter_key_is_safe_everywhere_it_is_used():
+    """
+    It becomes a CSV column, a query string in /api/trend?param=, a
+    data-param attribute, an MQTT topic segment, and part of an HTML form
+    field name (`low_temp`). Nothing validated it at all until
+    instruments started sharing keys.
+    """
+    for bad in ("Temp C", "temp/c", "2temp", "TEMP", "temp-c", ""):
+        with pytest.raises(ValueError) as exc:
+            Point(bad, "pv", "x", "u")
+        assert "parameter key" in str(exc.value)
+
+    for good in ("temp", "rh", "kwh_import", "pm2_5"):
+        assert Point(good, "pv", "x", "u").param == good
+
+
+# --- one parameter row per key, for the whole install ---------------------
+
+def _typed(code, **point):
+    model = DeviceModel(code=code, revision="r", vendor="v",
+                        datasheet_ref="x.pdf",
+                        registers=(Register("pv", 40001, "s16", "u", "PV"),))
+    return DeviceType(model=model, kind="temperature",
+                      points=(Point(register="pv", **point),))
+
+
+def test_two_instruments_may_share_a_parameter_key_if_they_agree():
+    """
+    Two instruments measuring temperature should store it in one place.
+    That is the point of a shared key, and it is allowed.
+    """
+    a = _typed("A-1", param="temp", label="Temperature", unit="C", decimals=1)
+    b = _typed("B-1", param="temp", label="Temperature", unit="C", decimals=1)
+    check_parameters({"A-1": a, "B-1": b})
+
+
+def test_two_instruments_disagreeing_about_one_parameter_are_fatal():
+    """
+    THE FAULT THIS EXISTS TO PREVENT, and it is silent without it.
+
+    `parameter` has one row per key for the whole install, and
+    commissioning upserts it with DO UPDATE SET label. So the label is
+    overwritten site-wide by whichever type was commissioned last, while
+    the unit, aggregation and decimals are frozen by whichever used the
+    key first and quietly discarded afterwards - a value rendered to the
+    wrong precision, consistently, with nothing on screen to say so.
+    """
+    a = _typed("A-1", param="temp", label="Temperature", unit="C", decimals=1)
+    b = _typed("B-1", param="temp", label="Probe temp", unit="C", decimals=0)
+    with pytest.raises(SystemExit) as exc:
+        check_parameters({"A-1": a, "B-1": b})
+    message = str(exc.value)
+    assert "temp" in message
+    assert "A-1" in message and "B-1" in message
+    # It says WHAT they disagree about and what each one declared.
+    assert "label" in message and "decimals" in message
+
+
+def test_the_disagreement_is_caught_by_the_form_and_by_the_poller():
+    """
+    Two collectors, two processes, one rule. The poller has no browser to
+    report into, so it has to refuse the same thing at startup rather
+    than poll a device whose parameter means something else.
+    """
+    import inspect
+
+    from jetpace_core import inventory
+    from jetpace_core.web import products as P
+
+    assert "check_parameters" in inspect.getsource(P.device_types)
+    assert "check_parameters" in inspect.getsource(
+        inventory.load_device_types)

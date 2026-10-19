@@ -28,6 +28,7 @@ a clock, so every test over it runs with none of those.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 
@@ -117,6 +118,15 @@ KINDS = ("energy", "pressure", "temperature", "humidity",
 CODE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,30}")
 CODE_PREFIX = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{0,15}")
 
+# A PARAMETER KEY is the one identifier that reaches the most places. It is
+# a column in a CSV export, a query string in /api/trend?param=, a
+# data-param attribute the chart reads back, an MQTT topic segment, and -
+# since set points became per-parameter - part of an HTML form field name
+# (`low_temp`). Lowercase, digits and underscore are safe in all five
+# without escaping; nothing validated it at all until instruments started
+# sharing keys.
+PARAM = re.compile(r"[a-z][a-z0-9_]{0,30}")
+
 # Mirrors the CHECK on parameter.aggregation, likewise.
 AGGREGATIONS = ("counter", "instantaneous")
 
@@ -155,8 +165,25 @@ class Point:
     # trend and report is out by a factor of ten, consistently, with
     # nothing on screen to suggest it.
     scale: float = 1.0
+    # Whether an operator sets a specification on this parameter. A
+    # cleanroom transmitter carries one on temperature AND on humidity,
+    # while the unit selector beside them carries none.
+    #
+    # ON THE POINT, not a list of names on the type. A list would have to
+    # be checked against the points - "every name in `limits` must be a
+    # parameter this type reads" - and a flag makes that mistake
+    # unrepresentable rather than caught. It also gives the set point
+    # fields the same order as the reading tiles on the device page,
+    # because both follow `points`.
+    limited: bool = False
 
     def __post_init__(self) -> None:
+        if not PARAM.fullmatch(self.param):
+            raise ValueError(
+                f"parameter key {self.param!r} is not usable: it becomes a "
+                f"CSV column, a query string, an MQTT topic segment and a "
+                f"form field name. Lowercase letters, digits and "
+                f"underscore, starting with a letter.")
         if self.aggregation not in AGGREGATIONS:
             raise ValueError(
                 f"point {self.param!r} has aggregation "
@@ -172,18 +199,16 @@ class DeviceType:
     Something a customer can choose on the commissioning form.
 
     One of these is what "device type" means in the dropdown: a register
-    map, what to read from it, and which parameter the low and high set
-    points apply to.
+    map, what to read from it, and which of those parameters an operator
+    sets a specification on.
+
+    Which parameters carry set points is a property of the POINTS
+    (`Point.limited`), not a list here. See the note on that field.
     """
 
     model: DeviceModel
     kind: str                           # device_model.kind
     points: tuple[Point, ...]
-    # Which parameter LSP and HSP apply to, or None for a type that has no
-    # single obvious one. The form shows the set point fields only when
-    # this is set, labelled with that parameter's unit - "LSP (Pa)" rather
-    # than a bare number whose unit the operator has to assume.
-    limits: str | None = None
     label: str = ""
     # A serial-to-TCP converter in Modbus-gateway mode passes the slave
     # address through on one port, which is 502 by convention. In
@@ -228,10 +253,6 @@ class DeviceType:
                 f"same parameter; the reading table's primary key is "
                 f"(device, parameter, time), so one would overwrite the "
                 f"other.")
-        if self.limits is not None and self.limits not in params:
-            raise ValueError(
-                f"device type {self.model.code!r} puts limits on "
-                f"{self.limits!r}, which it does not read.")
         if not 1 <= self.default_port <= 65535:
             raise ValueError(
                 f"device type {self.model.code!r} has default port "
@@ -266,8 +287,94 @@ class DeviceType:
         """The transcribed register a point reads. The address comes from here."""
         return self.model.by_key(point.register)
 
-    def limit_point(self) -> Point | None:
-        """The point LSP and HSP apply to, so the form can label their unit."""
-        if self.limits is None:
-            return None
-        return next(p for p in self.points if p.param == self.limits)
+    def limit_points(self) -> tuple[Point, ...]:
+        """
+        The parameters an operator sets a specification on, in point order.
+
+        Point order and not alphabetical: the device page lays its reading
+        tiles out in point order, and a form whose fields are in a
+        different order from the page they describe is a form somebody
+        fills in wrongly once.
+        """
+        return tuple(p for p in self.points if p.limited)
+
+
+@dataclass(frozen=True)
+class Planned:
+    """
+    An instrument this install will be able to commission, and cannot yet.
+
+    DELIBERATELY NOT A HALF-BUILT DeviceType. The addresses to read come
+    from a register map, so a type without one cannot be commissioned at
+    all, and putting it in the dropdown would be an entry that throws on
+    submit - the exact thing `DeviceType.__post_init__` exists to prevent.
+    This carries a name and nothing else. The form renders it greyed and
+    unselectable, so an engineer can see the catalogue is coming rather
+    than wondering whether their instrument is supported.
+
+    It never reaches `DEVICE_TYPES`, so the poller and `inventory.plan()`
+    never see one: "declared but not transcribed" stays distinct from
+    `Plan.unreadable`, which is a commissioned device nothing can read.
+
+    What it is waiting for is in docs/instruments.md.
+    """
+
+    code: str                    # the model code it will have
+    label: str                   # what the instrument is
+
+    @property
+    def title(self) -> str:
+        return f"{self.code} \u00b7 {self.label}" if self.label else self.code
+
+
+def check_parameters(types: Mapping[str, "DeviceType"]) -> None:
+    """
+    Two instruments may share a parameter key only if they agree about it.
+
+    WHY THIS HAS TO EXIST BEFORE A SECOND INSTRUMENT DOES. The `parameter`
+    table is keyed on `key` alone - one row for `temp` across the whole
+    install - and commissioning upserts it with
+    `ON CONFLICT (key) DO UPDATE SET label = EXCLUDED.label`. So the label
+    is overwritten site-wide by whichever type was commissioned most
+    recently, while the unit, the aggregation and the decimals are frozen
+    by whichever type used the key FIRST and silently discarded
+    afterwards.
+
+    With one instrument in the repository that was unobservable. With a
+    range of them sharing `temp`, `rh` and `flow`, commissioning an RTD
+    after a cleanroom transmitter relabels the cleanroom's parameter on
+    every page and throws away the RTD's own declared precision - a value
+    rendered to the wrong number of decimals, consistently, with nothing
+    on screen to suggest it.
+
+    The fix is not a cleverer upsert: `DO NOTHING` returns no row and the
+    insert needs its id back. It is this - make the disagreement
+    impossible, so the UPDATE is always a no-op. Called from both places
+    that collect types (the form's catalogue and the poller's), because
+    they are reached by different processes and only one of them has a
+    browser to report into.
+    """
+    seen: dict[str, tuple[str, Point]] = {}
+    for model_code, device_type in sorted(types.items()):
+        for point in device_type.points:
+            first = seen.get(point.param)
+            if first is None:
+                seen[point.param] = (model_code, point)
+                continue
+            other_code, other = first
+            differs = [
+                name for name in ("label", "unit", "aggregation", "decimals")
+                if getattr(point, name) != getattr(other, name)
+            ]
+            if differs:
+                raise SystemExit(
+                    f"{model_code} and {other_code} both read the parameter "
+                    f"{point.param!r} and disagree about its "
+                    f"{', '.join(differs)}.\n\n"
+                    f"  There is one `parameter` row per key for the whole "
+                    f"install, so the two cannot both be right:\n"
+                    f"    {other_code}: {other.label!r} {other.unit!r} "
+                    f"{other.aggregation} {other.decimals}dp\n"
+                    f"    {model_code}: {point.label!r} {point.unit!r} "
+                    f"{point.aggregation} {point.decimals}dp\n\n"
+                    f"  Either agree, or give one of them its own key.")

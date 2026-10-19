@@ -33,9 +33,9 @@ IDP = DeviceType(
             Register("unit", 40014, "u16", "", "Unit selector"),
         )),
     kind="pressure",
-    points=(Point("dp", "dp_pv", "Differential pressure", "Pa", decimals=0),
+    points=(Point("dp", "dp_pv", "Differential pressure", "Pa", decimals=0,
+                  limited=True),
             Point("dp_unit", "unit", "Unit selector", "", decimals=0)),
-    limits="dp",
 )
 TYPES = {"BENCH-1": IDP}
 
@@ -138,8 +138,8 @@ def test_no_override_falls_back_to_the_catalogue_and_not_to_one():
     fallback hardcoded to 1.0 here would ignore it.
     """
     catalogue = DeviceType(
-        model=IDP.model, kind="pressure", limits="dp",
-        points=(Point("dp", "dp_pv", "DP", "Pa", scale=0.1),))
+        model=IDP.model, kind="pressure",
+        points=(Point("dp", "dp_pv", "DP", "Pa", scale=0.1, limited=True),))
     plan = plan_of([gateway_row()], [parameter_row(param="dp", scale=None)],
                    types={"BENCH-1": catalogue})
     assert plan.gateways[0].devices[0].points[0].scale == 0.1

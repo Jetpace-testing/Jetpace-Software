@@ -21,7 +21,7 @@ import time
 from collections.abc import Sequence
 from pathlib import Path
 
-from fastapi import FastAPI, Form, Request
+from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -255,6 +255,31 @@ def sparkline(values: Sequence[float]) -> str:
     return " ".join(out)
 
 
+
+
+async def set_point_fields(request: Request) -> dict[str, str]:
+    """
+    The `low_<param>` / `high_<param>` fields, whatever they turned out to be.
+
+    A DEPENDENCY RATHER THAN DECLARED Form PARAMETERS, because how many
+    there are depends on which device type was chosen, and FastAPI can
+    only declare a fixed list. The names stay unique per parameter so
+    `WriteRejected.field` keeps addressing one input: the modal reddens a
+    field with `querySelector("[name=...]")`, and a repeated name would
+    redden whichever came first - a humidity rejection pointing at the
+    temperature box.
+
+    AND IT IS ASYNC WHILE THE ROUTE STAYS SYNC, deliberately. Reading the
+    form needs an await; making the route itself `async def` to get one
+    would put a blocking Modbus probe - held under `probe_lock`, up to a
+    timeout per point - and a blocking database transaction on the event
+    loop, with every five-second panel poll queued behind it. FastAPI
+    awaits the dependency on the loop and runs the route in the
+    threadpool, which is the arrangement the rest of this file assumes.
+    """
+    form = await request.form()
+    return {key: str(value) for key, value in form.multi_items()
+            if key.startswith(("low_", "high_"))}
 
 
 def create_app(dsn: str,
@@ -663,13 +688,12 @@ def create_app(dsn: str,
                 "device_types": {code: entry[1]
                                  for code, entry in catalogue.items()},
                 "device_type": default,
+                "planned_types": planned_types(),
                 "default_port": default.default_port if default else 502,
                 "suggested_code": (
                     writes.suggest_code(conn, queries.tenant_id(conn),
                                         default.code_prefix)
                     if default else ""),
-                "limit_unit": (default.limit_point().unit
-                               if default and default.limits else ""),
                 "devices": rows,
                 "product_tiles": tiles,
                 "kpi_columns": kpi_grid(SHELL_TILES + len(tiles)),
@@ -713,6 +737,16 @@ def create_app(dsn: str,
         way to notice a product being enabled.
         """
         return products_.device_types(products)
+
+    def planned_types() -> list:
+        """
+        Instruments the loaded products will sell and cannot yet.
+
+        Shown greyed in the type list. They carry no register map, so
+        there is nothing to commission against them - which is why they
+        are a separate list and not entries with a missing field.
+        """
+        return [p for product in products for p in product.planned]
 
     def point_specs(device_type) -> list:
         """
@@ -760,6 +794,48 @@ def create_app(dsn: str,
             parts.append(f"HSP {float(limit['high']):g}")
         text = ", ".join(parts)
         return f"{text} {unit}".strip() if text else ""
+
+    def limit_lines(limits: dict, device_type) -> list[dict]:
+        """
+        One line per parameter that ended up with a specification.
+
+        A list and not one string: a cleanroom transmitter is held to a
+        temperature band AND a humidity band, and running them together
+        on one line is how somebody reads a humidity set point in
+        degrees.
+        """
+        return [{"label": point.label,
+                 "text": limit_text(limits.get(point.param), point.unit)}
+                for point in device_type.limit_points()
+                if limits.get(point.param)]
+
+    def set_points_from(posted: dict, device_type):
+        """
+        Turn `low_<param>` / `high_<param>` fields into set points.
+
+        TWO RULES, and the second is the one worth stating. A blank field
+        for a parameter this type does not read is IGNORED: the operator
+        never saw that field, it is left over from another type the
+        dropdown offered. A field with something in it is REJECTED,
+        naming itself - somebody typed a specification against a
+        parameter this instrument does not measure, and dropping that
+        silently loses a specification.
+        """
+        mine = {p.param for p in device_type.limit_points()}
+        for field, value in posted.items():
+            param = field.split("_", 1)[1]
+            if param not in mine and str(value).strip():
+                raise writes.WriteRejected(
+                    f"{device_type.code} does not measure {param!r}, so it "
+                    f"has no set point for it.", field)
+        return [
+            writes.SetPoint(param=point.param,
+                            low=posted.get(f"low_{point.param}", ""),
+                            high=posted.get(f"high_{point.param}", ""),
+                            low_field=f"low_{point.param}",
+                            high_field=f"high_{point.param}")
+            for point in device_type.limit_points()
+        ]
 
     def selected_type(model: str | None):
         """
@@ -874,9 +950,8 @@ def create_app(dsn: str,
                            code: str = Form(""),
                            name: str = Form(""),
                            gateway_label: str = Form(""),
-                           low: str = Form(""),
-                           high: str = Form(""),
-                           reason: str = Form("")):
+                           reason: str = Form(""),
+                           posted: dict = Depends(set_point_fields)):
         """
         Create the device, its parameters, its limits and the audit row.
 
@@ -910,9 +985,20 @@ def create_app(dsn: str,
                 device = writes.commission_device(
                     conn, device_type=device_type,
                     code=code, name=name, host=host, port=port_n,
-                    unit_id=unit_n, low=low, high=high,
+                    unit_id=unit_n,
+                    set_points=set_points_from(posted, device_type),
                     gateway_label=gateway_label,
-                    answered=found.answered,
+                    # FULLY, not partly. `probe` reports answered=True
+                    # when some registers read and a later one does not,
+                    # which with a one-parameter instrument could never
+                    # happen. With two it can, and a transmitter whose
+                    # humidity register is silent would otherwise be
+                    # commissioned as answering, with no reason asked
+                    # for and only the temperature in the audit record -
+                    # a device accepted against a half-wrong map with
+                    # nothing saying so.
+                    answered=(found.answered
+                              and len(found.values) == len(device_type.points)),
                     detail=probe_detail(found, device_type),
                     reason=reason,
                     # NO LONGER NULL. Every device commissioned from here
@@ -928,13 +1014,11 @@ def create_app(dsn: str,
             return templates.TemplateResponse(
                 request, "_commissioned.html", {"rejected": exc})
 
-        unit = (device_type.limit_point().unit if device_type.limits else "")
         return templates.TemplateResponse(request, "_commissioned.html", {
             "device": device,
             "unit_id": device["unit_id"],
             "parameters": ", ".join(p.label for p in device_type.points),
-            "limit_text": limit_text(limits.get(device_type.limits or ""),
-                                     unit),
+            "limit_lines": limit_lines(limits, device_type),
             "reload_seconds": DEVICE_RELOAD_SECONDS,
             "next_code": next_code,
         })

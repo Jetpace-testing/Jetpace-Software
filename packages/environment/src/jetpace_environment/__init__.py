@@ -35,7 +35,9 @@ jetpace_core.inventory and jetpace_core.selection. Nothing in the import
 chain below this line touches a socket, a database or a web framework.
 """
 
-__all__ = ["DEVICE_TYPES"]
+from jetpace_core.devices import Planned
+
+__all__ = ["DEVICE_TYPES", "PLANNED"]
 
 # ---------------------------------------------------------------------------
 # what this product can commission
@@ -57,3 +59,24 @@ __all__ = ["DEVICE_TYPES"]
 # ---------------------------------------------------------------------------
 
 DEVICE_TYPES = ()
+
+
+# ---------------------------------------------------------------------------
+# what this product will sell, and cannot yet
+#
+# Declared here so the form can show them greyed: an engineer looking for
+# their transmitter finds out it is coming rather than concluding it is
+# unsupported. They carry a name and nothing else, because the addresses
+# to read come from a register map and there is no half of one worth
+# having - see jetpace_core.devices.Planned.
+#
+# Each row of docs/instruments.md says which datasheet it is waiting for.
+# When one is transcribed it moves from here to DEVICE_TYPES, and its
+# pinning test arrives with it.
+# ---------------------------------------------------------------------------
+
+PLANNED = (
+    Planned("iRHT-320", "Cleanroom temperature and humidity transmitter"),
+    Planned("DPT-100", "Differential pressure transmitter"),
+    Planned("RTD-100", "RTD temperature probe"),
+)

@@ -43,7 +43,7 @@ import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
-from .devices import DeviceType
+from .devices import DeviceType, check_parameters
 from .poller import DeviceSpec, GatewaySpec, PointSpec
 
 log = logging.getLogger(__name__)
@@ -95,6 +95,9 @@ def load_device_types(slugs: Sequence[str]) -> dict[str, DeviceType]:
                     f"with whichever product happened to load first.")
             found[device_type.code] = device_type
             origin[device_type.code] = slug
+    # The same agreement check the form's catalogue makes, for the same
+    # reason, in the process that has no browser to report into.
+    check_parameters(found)
     return found
 
 
